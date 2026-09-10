@@ -15,6 +15,8 @@ pub enum Action {
     ToggleScope,
     ToggleAll,
     ToggleSecurity,
+    NextView,
+    PrevView,
     Up,
     Down,
     PageUp,
@@ -174,6 +176,13 @@ pub const GLOBAL: &[Binding] = &[
     Binding::new(Key::ch('/'), Action::Filter, "Filter"),
     Binding::new(Key::ch('?'), Action::Help, "Help"),
     Binding::new(Key::code(KeyCode::Esc), Action::Back, "Back"),
+    Binding::new(Key::code(KeyCode::Tab), Action::NextView, "Next view").quiet(),
+    Binding::new(
+        Key::code(KeyCode::BackTab),
+        Action::PrevView,
+        "Previous view",
+    )
+    .quiet(),
     Binding::new(Key::ch('q'), Action::Quit, "Quit").quiet(),
     Binding::new(Key::ctrl('c'), Action::Quit, "Quit"),
     Binding::new(Key::ctrl('r'), Action::Refresh, "Refresh"),

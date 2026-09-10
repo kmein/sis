@@ -134,6 +134,7 @@ pub struct App {
     status: Option<(Status, Instant)>,
     last_manager: Option<Instant>,
     initial_view: String,
+    root: &'static str,
     jobs: JobTracker,
 }
 
@@ -153,26 +154,63 @@ impl App {
             status: None,
             last_manager: None,
             initial_view: initial_view.unwrap_or_else(|| "units".to_owned()),
+            root: "units",
             jobs: JobTracker::default(),
         }
     }
 
     /// Open the root view; returns the fetches it needs.
     pub fn start(&mut self) -> Vec<Effect> {
-        let view = match resources::lookup(&self.initial_view, self.scope) {
-            Some(view) => view,
+        let name = match resources::canonical(&self.initial_view) {
+            Some(name) => name,
             None => {
                 self.flash(Status::error(format!(
                     "no such view: {}",
                     self.initial_view
                 )));
-                resources::lookup("units", self.scope).expect("the units view exists")
+                "units"
             }
         };
-        let mut effects = self.apply(vec![Effect::Push(view)]);
+        let mut effects = self.open_root(name, "");
         effects.push(Effect::Fetch(FetchKind::Manager));
         self.last_manager = Some(Instant::now());
         effects
+    }
+
+    /// The name of the root view, for the view strip.
+    pub fn root(&self) -> &'static str {
+        self.root
+    }
+
+    /// Replace the whole stack with the registered view `name`: `:timers` is
+    /// a place, not a drill-down.
+    fn open_root(&mut self, name: &'static str, arg: &str) -> Vec<Effect> {
+        let view = resources::lookup(name, self.scope).expect("a canonical name");
+        let mut ctx = Ctx::new(&self.store, &self.settings, self.scope, &self.theme);
+        for view in &mut self.views {
+            view.on_close(&mut ctx);
+        }
+        let mut effects = ctx.finish();
+        self.views.clear();
+        self.root = name;
+        effects.push(Effect::Push(view));
+        let effects = self.apply(effects);
+        if !arg.is_empty() {
+            self.views.last_mut().expect("a view").set_filter(arg);
+        }
+        effects
+    }
+
+    /// `Tab` / `Shift-Tab` at the root: the next or previous view in the strip.
+    fn cycle_root(&mut self, forward: bool) -> Vec<Effect> {
+        let cycle = resources::CYCLE;
+        let pos = cycle.iter().position(|n| *n == self.root).unwrap_or(0);
+        let next = if forward {
+            (pos + 1) % cycle.len()
+        } else {
+            (pos + cycle.len() - 1) % cycle.len()
+        };
+        self.open_root(cycle[next], "")
     }
 
     pub fn view(&self) -> &dyn View {
@@ -400,6 +438,13 @@ impl App {
                 Vec::new()
             }
             Action::ToggleScope => self.switch_scope(self.scope.toggle()),
+            Action::NextView | Action::PrevView => {
+                if self.views.len() == 1 {
+                    self.cycle_root(binding.action == Action::NextView)
+                } else {
+                    Vec::new()
+                }
+            }
             Action::ToggleAll => {
                 self.settings.show_all = !self.settings.show_all;
                 self.settings_changed()
@@ -501,22 +546,8 @@ impl App {
                 self.settings.show_all = !self.settings.show_all;
                 self.settings_changed()
             }
-            _ => match resources::lookup(name, self.scope) {
-                Some(view) => {
-                    // A command replaces the stack: `:timers` is a place, not a drill-down.
-                    let mut ctx = Ctx::new(&self.store, &self.settings, self.scope, &self.theme);
-                    for view in &mut self.views {
-                        view.on_close(&mut ctx);
-                    }
-                    let mut effects = ctx.finish();
-                    self.views.clear();
-                    effects.push(Effect::Push(view));
-                    let effects = self.apply(effects);
-                    if !arg.is_empty() {
-                        self.views.last_mut().expect("a view").set_filter(arg);
-                    }
-                    effects
-                }
+            _ => match resources::canonical(name) {
+                Some(name) => self.open_root(name, arg),
                 None if ANALYZE_VERBS.contains(&name) && !arg.is_empty() => {
                     // `:calendar *-*-* 04:00`, `:cat-config systemd/system.conf`, ...
                     let mut args: Vec<&str> = Vec::new();

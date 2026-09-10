@@ -21,6 +21,7 @@ for everything), and enriches the rows on screen with PID, memory and age.
 | `/` | filter the current view (`Esc` clears) |
 | `?` | help overlay with every key of the current view |
 | `Esc` | back; `q` quits at the root, `ctrl-c` anywhere |
+| `Tab` `Shift-Tab` | next / previous view in the strip under the header (at the root) |
 | `j` `k` `ctrl-d` `ctrl-u` `g` `G` | move |
 | `Enter` | describe (`systemctl status`-like tabs: status, properties, cgroup, file) |
 | `l` | logs: a followed `journalctl` tail with `f` follow, `w` wrap, `p` priority, `/` filter |

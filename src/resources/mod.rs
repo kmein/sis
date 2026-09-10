@@ -652,6 +652,35 @@ pub fn lookup(name: &str, scope: Scope) -> Option<Box<dyn View>> {
         .map(|e| (e.open)(scope))
 }
 
+/// The views `Tab` cycles through at the root, in this order.
+pub const CYCLE: &[&str] = &[
+    "units",
+    "timers",
+    "sockets",
+    "jobs",
+    "journal",
+    "coredumps",
+    "sessions",
+    "users",
+    "machines",
+    "links",
+    "boot",
+    "security",
+    "blame",
+    "plot",
+    "bus",
+    "userdb",
+    "info",
+];
+
+/// Resolve a name or alias to the registered name.
+pub fn canonical(name: &str) -> Option<&'static str> {
+    REGISTRY
+        .iter()
+        .find(|e| e.name == name || e.aliases.contains(&name))
+        .map(|e| e.name)
+}
+
 /// Canonical view names, for help and completion.
 pub fn names() -> Vec<&'static str> {
     REGISTRY.iter().map(|e| e.name).collect()
