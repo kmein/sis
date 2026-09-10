@@ -12,7 +12,13 @@ use zbus::zvariant::OwnedObjectPath;
 use crate::{
     resources::View,
     store::ViewData,
-    systemd::{Backend, Scope, actions::UnitAction, fetch::FetchKind, watch::SystemdSignal},
+    systemd::{
+        Backend, Scope,
+        actions::UnitAction,
+        fetch::FetchKind,
+        journal::{JournalId, JournalItem, JournalSpec},
+        watch::SystemdSignal,
+    },
 };
 
 /// Everything the application reacts to.
@@ -39,6 +45,11 @@ pub enum Event {
         unit: String,
         outcome: Result<String, String>,
     },
+    /// A line (or the end) of a journal tail.
+    Journal {
+        id: JournalId,
+        item: JournalItem,
+    },
 }
 
 /// Everything the application asks the outside world to do. The UI-only
@@ -52,6 +63,11 @@ pub enum Effect {
         action: UnitAction,
         unit: String,
     },
+    OpenJournal {
+        id: JournalId,
+        spec: JournalSpec,
+    },
+    CloseJournal(JournalId),
     SwitchScope(Scope),
     Quit,
     Push(Box<dyn View>),

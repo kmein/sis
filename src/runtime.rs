@@ -1,7 +1,7 @@
 //! The tokio side: owns the terminal, the event channel and the backend, and
 //! executes the effects the [`App`] asks for.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use eyre::Result;
 use ratatui::DefaultTerminal;
@@ -17,7 +17,9 @@ use crate::{
     systemd::{
         Backend, Scope,
         actions::{self, Outcome},
-        fetch, watch,
+        fetch,
+        journal::{self, JournalHandle, JournalId},
+        watch,
     },
     ui,
 };
@@ -28,6 +30,7 @@ pub struct Runtime {
     backend: Arc<Backend>,
     app: App,
     watchers: Vec<JoinHandle<()>>,
+    journals: HashMap<JournalId, JournalHandle>,
 }
 
 impl Runtime {
@@ -40,6 +43,7 @@ impl Runtime {
             backend: Arc::new(backend),
             app,
             watchers: Vec::new(),
+            journals: HashMap::new(),
         }
     }
 
@@ -136,6 +140,24 @@ impl Runtime {
                         };
                         let _ = tx.send(event).await;
                     });
+                }
+                Effect::OpenJournal { id, spec } => {
+                    match journal::spawn(id, &spec, self.tx.clone()) {
+                        Ok(handle) => {
+                            self.journals.insert(id, handle);
+                        }
+                        Err(err) => {
+                            let tx = self.tx.clone();
+                            tokio::spawn(async move {
+                                let _ = tx.send(Event::Error(format!("{err:#}"))).await;
+                            });
+                        }
+                    }
+                }
+                Effect::CloseJournal(id) => {
+                    if let Some(handle) = self.journals.remove(&id) {
+                        handle.stop();
+                    }
                 }
                 Effect::SwitchScope(scope) => self.switch_scope(scope),
                 Effect::Quit => self.app.should_quit = true,

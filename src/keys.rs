@@ -39,6 +39,9 @@ pub enum Action {
     Tab3,
     Tab4,
     ToggleWrap,
+    ToggleFollow,
+    CyclePriority,
+    Clear,
     // Row actions
     Select,
     Logs,

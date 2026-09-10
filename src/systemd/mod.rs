@@ -1,6 +1,7 @@
 pub mod actions;
 pub mod errors;
 pub mod fetch;
+pub mod journal;
 pub mod proxies;
 pub mod types;
 pub mod unit;

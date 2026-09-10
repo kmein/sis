@@ -17,6 +17,20 @@ pub fn timestamp(usec: u64) -> String {
     }
 }
 
+/// `Sep 10 08:13:05` like journalctl's short output.
+pub fn short_time(usec: u64) -> String {
+    if usec == 0 {
+        return "--- -- --:--:--".to_owned();
+    }
+    match Timestamp::from_microsecond(usec as i64) {
+        Ok(ts) => ts
+            .to_zoned(TimeZone::system())
+            .strftime("%b %d %H:%M:%S")
+            .to_string(),
+        Err(_) => String::new(),
+    }
+}
+
 /// k9s-style age of a µs-since-epoch timestamp: `12s`, `5m`, `3h`, `2d4h`.
 pub fn age(usec: u64) -> String {
     if usec == 0 {

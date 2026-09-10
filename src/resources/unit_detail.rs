@@ -15,13 +15,13 @@ use ratatui::{
 };
 use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 
-use super::{Ctx, Handled, View, text::TextPane, units};
+use super::{Ctx, Handled, View, journal::JournalView, text::TextPane, units};
 use crate::{
-    event::Status,
     keys::{self, Action, Binding, Key},
     store::{DataKind, UnitDetail},
     systemd::{
         fetch::{FetchKind, prop_str, prop_u32, prop_u64},
+        journal::JournalSpec,
         types::{ActiveState, LoadState, Process, UnitKind},
         watch::SystemdSignal,
     },
@@ -197,7 +197,7 @@ impl View for UnitDetailView {
             Action::ToggleWrap => {
                 self.pane().on_global(Action::ToggleWrap);
             }
-            Action::Logs => ctx.status(Status::info("logs are not implemented yet")),
+            Action::Logs => ctx.push(JournalView::boxed(JournalSpec::unit(ctx.scope, &self.name))),
             action => units::perform(&self.name, action, binding.confirm, ctx),
         }
         Handled::Yes

@@ -6,13 +6,17 @@ use ratatui::{layout::Constraint, widgets::Cell};
 
 use super::{
     Column, Ctx, Resource, Settings, SortKey,
+    journal::JournalView,
     unit_detail::{Tab, UnitDetailView},
 };
 use crate::{
     event::{Effect, Status},
     keys::{Action, Binding, Key},
     store::{DataKind, Store},
-    systemd::{actions::UnitAction, fetch::FetchKind, unit::Unit, watch::SystemdSignal},
+    systemd::{
+        actions::UnitAction, fetch::FetchKind, journal::JournalSpec, unit::Unit,
+        watch::SystemdSignal,
+    },
     ui::{format, theme::Theme},
 };
 
@@ -221,6 +225,7 @@ impl Resource for UnitsResource {
         match action {
             Action::Select => ctx.push(UnitDetailView::boxed(&row.name, &row.path, Tab::Status)),
             Action::Cat => ctx.push(UnitDetailView::boxed(&row.name, &row.path, Tab::File)),
+            Action::Logs => ctx.push(JournalView::boxed(JournalSpec::unit(ctx.scope, &row.name))),
             other => perform(&row.name, other, confirm, ctx),
         }
     }

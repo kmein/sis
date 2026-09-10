@@ -1,6 +1,7 @@
 //! The view abstraction: a [`Resource`] describes a table of rows, a [`View`]
 //! is something on the view stack that handles keys and draws itself.
 
+pub mod journal;
 pub mod text;
 pub mod unit_detail;
 pub mod units;
@@ -18,6 +19,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Row, Table, TableState},
 };
 
+use crate::systemd::journal::{JournalId, JournalItem};
 use crate::{
     event::{Effect, Status},
     keys::{self, Action, Binding},
@@ -235,6 +237,8 @@ pub trait View: Send {
     fn on_tick(&mut self, ctx: &mut Ctx<'_>);
 
     fn on_signal(&mut self, _signal: &SystemdSignal, _ctx: &mut Ctx<'_>) {}
+
+    fn on_journal(&mut self, _id: JournalId, _item: JournalItem) {}
 
     fn on_key(&mut self, key: &KeyEvent, ctx: &mut Ctx<'_>) -> Handled;
 

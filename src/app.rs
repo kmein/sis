@@ -199,6 +199,12 @@ impl App {
             }
             Event::BackendReady(backend) => self.on_backend(backend),
             Event::Signal(signal) => self.on_signal(signal),
+            Event::Journal { id, item } => {
+                for view in &mut self.views {
+                    view.on_journal(id, item.clone());
+                }
+                Vec::new()
+            }
             Event::ActionStarted { action, unit, job } => {
                 if let Some(status) = self.jobs.started(job, action, unit, Instant::now()) {
                     self.flash(status);
