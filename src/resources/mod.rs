@@ -1,8 +1,13 @@
 //! The view abstraction: a [`Resource`] describes a table of rows, a [`View`]
 //! is something on the view stack that handles keys and draws itself.
 
+pub mod coredumps;
+pub mod jobs;
 pub mod journal;
+pub mod sessions;
+pub mod sockets;
 pub mod text;
+pub mod timers;
 pub mod unit_detail;
 pub mod units;
 
@@ -21,7 +26,7 @@ use ratatui::{
 
 use crate::systemd::journal::{JournalId, JournalItem};
 use crate::{
-    event::{Effect, Status},
+    event::{Effect, Exec, Status},
     keys::{self, Action, Binding},
     store::{DataKind, Store},
     systemd::{
@@ -81,6 +86,20 @@ impl<'a> Ctx<'a> {
         if confirm {
             self.effect(Effect::Confirm {
                 text: format!("{action} {unit}?"),
+                effect: Box::new(effect),
+            });
+        } else {
+            self.effect(effect);
+        }
+    }
+
+    /// Run an external command, asking first if `confirm` is set.
+    pub fn exec(&mut self, exec: Exec, confirm: bool) {
+        let text = format!("{}?", exec.describe);
+        let effect = Effect::Exec(exec);
+        if confirm {
+            self.effect(Effect::Confirm {
+                text,
                 effect: Box::new(effect),
             });
         } else {
@@ -529,11 +548,24 @@ struct Entry {
     open: fn() -> Box<dyn View>,
 }
 
-const REGISTRY: &[Entry] = &[Entry {
-    name: units::UnitsResource::NAME,
-    aliases: units::UnitsResource::ALIASES,
-    open: TableView::<units::UnitsResource>::boxed,
-}];
+macro_rules! entry {
+    ($res:ty) => {
+        Entry {
+            name: <$res>::NAME,
+            aliases: <$res>::ALIASES,
+            open: TableView::<$res>::boxed,
+        }
+    };
+}
+
+const REGISTRY: &[Entry] = &[
+    entry!(units::UnitsResource),
+    entry!(timers::TimersResource),
+    entry!(sockets::SocketsResource),
+    entry!(jobs::JobsResource),
+    entry!(coredumps::CoredumpsResource),
+    entry!(sessions::SessionsResource),
+];
 
 /// Open the view registered under `name` or one of its aliases.
 pub fn lookup(name: &str) -> Option<Box<dyn View>> {

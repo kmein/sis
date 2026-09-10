@@ -32,7 +32,8 @@ impl JournalId {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JournalTarget {
     Unit(String),
-    Pid(u32),
+    /// A raw journal match such as `_PID=42`.
+    Match(String),
     Machine(String),
     All,
 }
@@ -46,6 +47,14 @@ pub struct JournalSpec {
 }
 
 impl JournalSpec {
+    pub fn matching(scope: Scope, m: impl Into<String>) -> Self {
+        Self {
+            scope,
+            target: JournalTarget::Match(m.into()),
+            lines: 500,
+        }
+    }
+
     pub fn unit(scope: Scope, unit: &str) -> Self {
         Self {
             scope,
@@ -68,7 +77,7 @@ impl JournalSpec {
                 Scope::System => args.push(format!("--unit={u}")),
                 Scope::User => args.push(format!("--user-unit={u}")),
             },
-            JournalTarget::Pid(pid) => args.push(format!("_PID={pid}")),
+            JournalTarget::Match(m) => args.push(m.clone()),
             JournalTarget::Machine(m) => args.push(format!("--machine={m}")),
             JournalTarget::All => {
                 if self.scope == Scope::User {
@@ -82,7 +91,7 @@ impl JournalSpec {
     pub fn describe(&self) -> String {
         match &self.target {
             JournalTarget::Unit(u) => u.clone(),
-            JournalTarget::Pid(p) => format!("pid {p}"),
+            JournalTarget::Match(m) => m.clone(),
             JournalTarget::Machine(m) => format!("machine {m}"),
             JournalTarget::All => format!("{} journal", self.scope),
         }

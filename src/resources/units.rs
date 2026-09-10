@@ -223,8 +223,16 @@ impl Resource for UnitsResource {
     fn on_action(row: &Unit, action: Action, ctx: &mut Ctx<'_>) {
         let confirm = BINDINGS.iter().any(|b| b.action == action && b.confirm);
         match action {
-            Action::Select => ctx.push(UnitDetailView::boxed(&row.name, &row.path, Tab::Status)),
-            Action::Cat => ctx.push(UnitDetailView::boxed(&row.name, &row.path, Tab::File)),
+            Action::Select => ctx.push(UnitDetailView::boxed(
+                &row.name,
+                Some(row.path.clone()),
+                Tab::Status,
+            )),
+            Action::Cat => ctx.push(UnitDetailView::boxed(
+                &row.name,
+                Some(row.path.clone()),
+                Tab::File,
+            )),
             Action::Logs => ctx.push(JournalView::boxed(JournalSpec::unit(ctx.scope, &row.name))),
             other => perform(&row.name, other, confirm, ctx),
         }

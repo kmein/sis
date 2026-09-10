@@ -14,7 +14,7 @@ use zbus::zvariant::OwnedObjectPath;
 use crate::{
     event::{Effect, Event, Status},
     keys::{self, Action},
-    resources::{self, Ctx, Handled, Settings, View},
+    resources::{self, Ctx, Handled, Settings, View, text::TextView},
     store::Store,
     systemd::{Backend, Scope, actions::UnitAction, fetch::FetchKind, watch::SystemdSignal},
     ui::theme::Theme,
@@ -199,6 +199,25 @@ impl App {
             }
             Event::BackendReady(backend) => self.on_backend(backend),
             Event::Signal(signal) => self.on_signal(signal),
+            Event::Exec { exec, output } => match (exec.title, output) {
+                (Some(title), Ok(text)) => {
+                    self.apply(vec![Effect::Push(TextView::boxed(title, &text))])
+                }
+                (None, Ok(text)) => {
+                    let first = text.lines().next().unwrap_or("").trim();
+                    let msg = if first.is_empty() {
+                        format!("{}: done", exec.describe)
+                    } else {
+                        first.to_owned()
+                    };
+                    self.flash(Status::ok(msg));
+                    Vec::new()
+                }
+                (_, Err(err)) => {
+                    self.flash(Status::error(format!("{}: {err}", exec.describe)));
+                    Vec::new()
+                }
+            },
             Event::Journal { id, item } => {
                 for view in &mut self.views {
                     view.on_journal(id, item.clone());
@@ -507,6 +526,12 @@ impl App {
                     Effect::Perform { action, unit } => {
                         self.flash(Status::info(format!("{} {unit}…", action.progressive())));
                         out.push(Effect::Perform { action, unit });
+                    }
+                    Effect::Exec(exec) => {
+                        if exec.title.is_none() {
+                            self.flash(Status::info(format!("{}…", exec.describe)));
+                        }
+                        out.push(Effect::Exec(exec));
                     }
                     other => out.push(other),
                 }

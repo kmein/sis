@@ -50,6 +50,11 @@ pub enum Event {
         id: JournalId,
         item: JournalItem,
     },
+    /// A command finished.
+    Exec {
+        exec: Exec,
+        output: Result<String, String>,
+    },
 }
 
 /// Everything the application asks the outside world to do. The UI-only
@@ -68,6 +73,9 @@ pub enum Effect {
         spec: JournalSpec,
     },
     CloseJournal(JournalId),
+    /// Run a command; show its output in a text view when `title` is set,
+    /// otherwise report success or failure in the status line.
+    Exec(Exec),
     SwitchScope(Scope),
     Quit,
     Push(Box<dyn View>),
@@ -78,6 +86,32 @@ pub enum Effect {
         text: String,
         effect: Box<Effect>,
     },
+}
+
+/// A command to run outside the bus.
+#[derive(Debug, Clone)]
+pub struct Exec {
+    pub program: String,
+    pub args: Vec<String>,
+    pub title: Option<String>,
+    /// What to call it in the status line.
+    pub describe: String,
+}
+
+impl Exec {
+    pub fn new(program: &str, args: &[&str]) -> Self {
+        Self {
+            program: program.to_owned(),
+            args: args.iter().map(|a| (*a).to_owned()).collect(),
+            title: None,
+            describe: format!("{program} {}", args.join(" ")),
+        }
+    }
+
+    pub fn show(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
 }
 
 /// A message for the status line.

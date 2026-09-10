@@ -18,14 +18,41 @@ use super::{
     types::UnitKind,
     unit::{Enrichment, Unit},
 };
-use crate::store::{ManagerInfo, UnitDetail, ViewData};
+use super::{
+    Scope,
+    subprocess::{JsonShape, run_json},
+};
+use crate::store::{
+    CoredumpRow, JobRow, ManagerInfo, SessionRow, SocketRow, TimerRow, UnitDetail, ViewData,
+};
+
+fn args(items: &[&str]) -> Vec<String> {
+    items.iter().map(|s| (*s).to_owned()).collect()
+}
+
+/// systemctl arguments, with `--user` when talking to the user manager.
+pub fn scoped(scope: Scope, items: &[&str]) -> Vec<String> {
+    let mut v = args(items);
+    if scope == Scope::User {
+        v.insert(0, "--user".to_owned());
+    }
+    v
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FetchKind {
     Units,
     UnitFiles,
     Manager,
-    Detail { name: String, path: OwnedObjectPath },
+    Detail {
+        name: String,
+        path: Option<OwnedObjectPath>,
+    },
+    Timers,
+    Sockets,
+    Jobs,
+    Coredumps,
+    Sessions,
 }
 
 impl FetchKind {
@@ -64,7 +91,75 @@ impl FetchKind {
                 })
             }
             Self::Detail { name, path } => {
-                ViewData::UnitDetail(Box::new(detail(&backend, name, path).await?))
+                let path = match path {
+                    Some(p) => p.clone(),
+                    None => backend.manager.load_unit(name).await.context("LoadUnit")?,
+                };
+                ViewData::UnitDetail(Box::new(detail(&backend, name, &path).await?))
+            }
+            Self::Timers => {
+                let rows: Vec<TimerRow> = run_json(
+                    "systemctl",
+                    &scoped(backend.scope, &["list-timers", "--all", "--output=json"]),
+                    JsonShape::Array,
+                )
+                .await?;
+                ViewData::Timers(rows)
+            }
+            Self::Sockets => {
+                let mut rows: Vec<SocketRow> = run_json(
+                    "systemctl",
+                    &scoped(backend.scope, &["list-sockets", "--all", "--output=json"]),
+                    JsonShape::Array,
+                )
+                .await?;
+                for r in &mut rows {
+                    r.key = format!("{} {}", r.unit, r.listen);
+                }
+                ViewData::Sockets(rows)
+            }
+            Self::Jobs => {
+                let jobs = backend.manager.list_jobs().await.context("ListJobs")?;
+                ViewData::Jobs(
+                    jobs.into_iter()
+                        .map(|j| JobRow {
+                            key: j.0.to_string(),
+                            id: j.0,
+                            unit: j.1,
+                            kind: j.2,
+                            state: j.3,
+                        })
+                        .collect(),
+                )
+            }
+            Self::Coredumps => {
+                // Newest first, capped: hosts with a crash loop have 100k+ dumps.
+                let mut rows: Vec<CoredumpRow> = run_json(
+                    "coredumpctl",
+                    &args(&[
+                        "list",
+                        "--json=short",
+                        "--no-pager",
+                        "--reverse",
+                        "-n",
+                        "2000",
+                    ]),
+                    JsonShape::Array,
+                )
+                .await?;
+                for r in &mut rows {
+                    r.key = format!("{}:{}", r.time, r.pid);
+                }
+                ViewData::Coredumps(rows)
+            }
+            Self::Sessions => {
+                let rows: Vec<SessionRow> = run_json(
+                    "loginctl",
+                    &args(&["list-sessions", "--json=short", "--no-pager"]),
+                    JsonShape::Array,
+                )
+                .await?;
+                ViewData::Sessions(rows)
             }
         };
         debug!(kind = ?self, elapsed = ?started.elapsed(), "fetched");

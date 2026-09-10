@@ -79,7 +79,7 @@ const BINDINGS: &[Binding] = &[
 
 pub struct UnitDetailView {
     name: String,
-    path: OwnedObjectPath,
+    path: Option<OwnedObjectPath>,
     tab: Tab,
     panes: HashMap<Tab, TextPane>,
     last_fetch: Option<Instant>,
@@ -87,10 +87,10 @@ pub struct UnitDetailView {
 }
 
 impl UnitDetailView {
-    pub fn new(name: &str, path: &OwnedObjectPath, tab: Tab) -> Self {
+    pub fn new(name: &str, path: Option<OwnedObjectPath>, tab: Tab) -> Self {
         Self {
             name: name.to_owned(),
-            path: path.clone(),
+            path,
             tab,
             panes: Tab::ALL.iter().map(|t| (*t, TextPane::default())).collect(),
             last_fetch: None,
@@ -98,7 +98,7 @@ impl UnitDetailView {
         }
     }
 
-    pub fn boxed(name: &str, path: &OwnedObjectPath, tab: Tab) -> Box<dyn View> {
+    pub fn boxed(name: &str, path: Option<OwnedObjectPath>, tab: Tab) -> Box<dyn View> {
         Box::new(Self::new(name, path, tab))
     }
 
@@ -116,6 +116,7 @@ impl UnitDetailView {
 
     fn rebuild(&mut self, detail: &UnitDetail, theme: &Theme) {
         self.has_data = true;
+        self.path = Some(detail.path.clone());
         let status = status_lines(detail, theme);
         let props = property_lines(detail, theme);
         let cgroup = cgroup_lines(detail, theme);
@@ -168,7 +169,9 @@ impl View for UnitDetailView {
 
     fn on_signal(&mut self, signal: &SystemdSignal, ctx: &mut Ctx<'_>) {
         let mine = match signal {
-            SystemdSignal::UnitsDirty(paths) => paths.contains(&self.path),
+            SystemdSignal::UnitsDirty(paths) => {
+                self.path.as_ref().is_some_and(|p| paths.contains(p))
+            }
             SystemdSignal::UnitNew(n) | SystemdSignal::UnitRemoved(n) => *n == self.name,
             SystemdSignal::JobNew { unit, .. } | SystemdSignal::JobRemoved { unit, .. } => {
                 *unit == self.name

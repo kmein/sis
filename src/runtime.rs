@@ -19,7 +19,7 @@ use crate::{
         actions::{self, Outcome},
         fetch,
         journal::{self, JournalHandle, JournalId},
-        watch,
+        subprocess, watch,
     },
     ui,
 };
@@ -158,6 +158,13 @@ impl Runtime {
                     if let Some(handle) = self.journals.remove(&id) {
                         handle.stop();
                     }
+                }
+                Effect::Exec(exec) => {
+                    let tx = self.tx.clone();
+                    tokio::spawn(async move {
+                        let output = subprocess::run(&exec.program, &exec.args).await;
+                        let _ = tx.send(Event::Exec { exec, output }).await;
+                    });
                 }
                 Effect::SwitchScope(scope) => self.switch_scope(scope),
                 Effect::Quit => self.app.should_quit = true,

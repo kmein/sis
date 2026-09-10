@@ -3,6 +3,7 @@ pub mod errors;
 pub mod fetch;
 pub mod journal;
 pub mod proxies;
+pub mod subprocess;
 pub mod types;
 pub mod unit;
 pub mod watch;
