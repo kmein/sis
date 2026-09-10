@@ -4,7 +4,7 @@
 
 Bro is `systemctl`. Bro knows everything, but you have to ask him in full
 sentences, one at a time, and he never tells you when something changes.
-sis just shows you.
+sis just tells you.
 
 ```
 sis            # sis, what's going on?
@@ -49,10 +49,10 @@ Press `?` anywhere for the keys of the view you are in.
 
 ## Permissions
 
-Looking is free: sis reads over D-Bus as whoever runs it. Actions go through
-polkit, so on a desktop you get the usual prompt and on a bare TTY the status
-line tells you to run as root or use `--user`. Shells and debuggers inside
-units need root.
+Reading needs no privileges: sis talks to systemd over D-Bus as whoever runs
+it. Actions go through polkit, so on a desktop you get the usual prompt and
+on a bare TTY the status line tells you to run as root or use `--user`.
+Shells and debuggers inside units need root.
 
 ## Getting sis
 
