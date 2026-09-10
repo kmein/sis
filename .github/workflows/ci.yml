@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cargo:
+    name: fmt, clippy, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: cachix/install-nix-action@v31
+
+      # The toolchain comes from the flake's devShell, so CI formats and lints
+      # with exactly the cargo, clippy and rustfmt a `nix develop` gives you.
+      # That rustfmt is stable, which ignores the unstable options in
+      # rustfmt.toml and warns about each one; the check itself still holds.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ hashFiles('flake.lock') }}
+
+      - run: nix develop --command cargo fmt --check
+      - run: nix develop --command cargo clippy --all-targets -- -D warnings
+      - run: nix develop --command cargo test
+
+  nix:
+    name: nix build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: cachix/install-nix-action@v31
+      - run: nix build --print-build-logs
+      - run: nix flake check --all-systems --print-build-logs
