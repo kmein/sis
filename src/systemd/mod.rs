@@ -1,10 +1,12 @@
+pub mod fetch;
 pub mod proxies;
 pub mod types;
+pub mod unit;
 
 use std::fmt;
 
 use eyre::{Context, Result};
-use zbus::Connection;
+use zbus::{Connection, proxy::CacheProperties};
 
 use self::proxies::ManagerProxy;
 
@@ -47,25 +49,28 @@ impl Backend {
             Scope::System => Connection::system().await.context("connecting to the system bus")?,
             Scope::User => session_connection().await?,
         };
-        let manager = ManagerProxy::new(&conn).await.context("creating the systemd manager proxy")?;
+        // The manager never announces changes to NNames & co., so a property
+        // cache would go stale immediately.
+        let manager = ManagerProxy::builder(&conn)
+            .cache_properties(CacheProperties::No)
+            .build()
+            .await
+            .context("creating the systemd manager proxy")?;
         Ok(Self { conn, manager, scope })
     }
 }
 
 /// Connect to the user's session bus, falling back to `$XDG_RUNTIME_DIR/bus`
-/// when `DBUS_SESSION_BUS_ADDRESS` is unset.
+/// when `DBUS_SESSION_BUS_ADDRESS` is unset (e.g. from a plain TTY).
 async fn session_connection() -> Result<Connection> {
     if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some() {
         return Connection::session().await.context("connecting to the session bus");
     }
-    let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-        .ok()
-        .or_else(|| {
-            // SAFETY: getuid never fails and has no preconditions.
-            let uid = unsafe { libc_getuid() };
-            Some(format!("/run/user/{uid}"))
-        })
-        .expect("a runtime dir");
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| {
+        // SAFETY: getuid never fails and has no preconditions.
+        let uid = unsafe { libc_getuid() };
+        format!("/run/user/{uid}")
+    });
     let address = format!("unix:path={runtime_dir}/bus");
     zbus::connection::Builder::address(address.as_str())
         .context("parsing the session bus address")?
