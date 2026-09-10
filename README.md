@@ -1,10 +1,9 @@
 # sis
 
-**systemd has a sister.**
+**systemctl has a sister.**
 
-Bro is `systemctl`. Bro knows everything, but you have to ask him in full
-sentences, one at a time, and he never tells you when something changes.
-sis just tells you.
+Bro is called `systemctl`. Bro knows everything, but you have to ask him in full
+sentences, one at a time. sis just tells you.
 
 ```
 sis            # sis, what's going on?
