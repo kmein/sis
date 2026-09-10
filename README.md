@@ -17,7 +17,7 @@ for everything), and enriches the rows on screen with PID, memory and age.
 
 | Key | Action |
 |---|---|
-| `:` | command bar, `Tab` completes view names |
+| `:` | command bar; `Tab` completes the common prefix, then cycles through the candidates (`Shift-Tab` backwards) |
 | `/` | filter the current view (`Esc` clears) |
 | `?` | help overlay with every key of the current view |
 | `Esc` | back; `q` quits at the root, `ctrl-c` anywhere |

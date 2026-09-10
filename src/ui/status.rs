@@ -15,11 +15,26 @@ use crate::{
 pub fn draw(f: &mut Frame<'_>, area: Rect, app: &App) {
     let theme = &app.theme;
     let line = match &app.prompt {
-        Prompt::Command(text) => Line::from(vec![
-            Span::styled("🐚> ", theme.prompt),
-            Span::raw(text.clone()),
-            Span::styled("█", theme.prompt),
-        ]),
+        Prompt::Command(text) => {
+            let mut spans = vec![
+                Span::styled("🐚> ", theme.prompt),
+                Span::raw(text.clone()),
+                Span::styled("█", theme.prompt),
+            ];
+            if let Some((candidates, index)) = app.completions() {
+                spans.push(Span::raw("   "));
+                for (i, c) in candidates.iter().enumerate() {
+                    let style = if i == index {
+                        theme.selected
+                    } else {
+                        theme.dim
+                    };
+                    spans.push(Span::styled(c.clone(), style));
+                    spans.push(Span::raw(" "));
+                }
+            }
+            Line::from(spans)
+        }
         Prompt::Filter(text) => Line::from(vec![
             Span::styled("🔍> ", theme.prompt),
             Span::raw(text.clone()),

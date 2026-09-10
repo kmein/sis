@@ -685,12 +685,3 @@ pub fn canonical(name: &str) -> Option<&'static str> {
 pub fn names() -> Vec<&'static str> {
     REGISTRY.iter().map(|e| e.name).collect()
 }
-
-/// Names starting with `prefix`, for tab completion.
-pub fn complete(prefix: &str) -> Vec<&'static str> {
-    REGISTRY
-        .iter()
-        .map(|e| e.name)
-        .filter(|n| n.starts_with(prefix))
-        .collect()
-}

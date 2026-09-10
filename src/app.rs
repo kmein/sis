@@ -47,7 +47,36 @@ const SINGLE_ARG_VERBS: &[&str] = &[
     "condition",
     "image-policy",
 ];
+/// Commands that are not views.
+const BUILTIN_COMMANDS: &[&str] = &["user", "system", "all", "help", "quit"];
 const MANAGER_EVERY: Duration = Duration::from_secs(2);
+
+/// State of a Tab cycle in the command bar.
+struct Completion {
+    candidates: Vec<String>,
+    /// Index of the candidate currently in the prompt; `usize::MAX` after a
+    /// common-prefix completion (nothing selected yet).
+    index: usize,
+}
+
+/// The longest prefix shared by all candidates.
+fn common_prefix(items: &[String]) -> String {
+    let Some(first) = items.first() else {
+        return String::new();
+    };
+    let mut end = first.len();
+    for item in &items[1..] {
+        end = first
+            .char_indices()
+            .zip(item.chars())
+            .take_while(|((_, a), b)| a == b)
+            .map(|((i, a), _)| i + a.len_utf8())
+            .last()
+            .unwrap_or(0)
+            .min(end);
+    }
+    first[..end].to_owned()
+}
 /// Give up waiting for a job's result after this long.
 const JOB_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -136,6 +165,7 @@ pub struct App {
     initial_view: String,
     root: &'static str,
     jobs: JobTracker,
+    completion: Option<Completion>,
 }
 
 impl App {
@@ -156,6 +186,7 @@ impl App {
             initial_view: initial_view.unwrap_or_else(|| "units".to_owned()),
             root: "units",
             jobs: JobTracker::default(),
+            completion: None,
         }
     }
 
@@ -479,6 +510,67 @@ impl App {
         self.apply(effects)
     }
 
+    /// Tab in the command bar: complete the common prefix, then cycle through
+    /// the candidates on repeated presses (`Shift-Tab` goes back).
+    fn complete(&mut self, text: &str, forward: bool) -> String {
+        if let Some(c) = &mut self.completion
+            && c.candidates.get(c.index).is_some_and(|cur| cur == text)
+        {
+            let n = c.candidates.len();
+            c.index = if forward {
+                (c.index + 1) % n
+            } else {
+                (c.index + n - 1) % n
+            };
+            return c.candidates[c.index].clone();
+        }
+        self.completion = None;
+        let typed = text.trim_start();
+        if typed.contains(' ') {
+            return text.to_owned();
+        }
+        let mut candidates: Vec<String> = resources::names()
+            .into_iter()
+            .chain(BUILTIN_COMMANDS.iter().copied())
+            .chain(ANALYZE_VERBS.iter().copied())
+            .filter(|n| n.starts_with(typed))
+            .map(str::to_owned)
+            .collect();
+        candidates.sort();
+        candidates.dedup();
+        match candidates.len() {
+            0 => {
+                self.flash(Status::info(format!("nothing starts with '{typed}'")));
+                text.to_owned()
+            }
+            1 => candidates.remove(0),
+            _ => {
+                let common = common_prefix(&candidates);
+                if common.len() > typed.len() {
+                    self.completion = Some(Completion {
+                        candidates,
+                        index: usize::MAX,
+                    });
+                    common
+                } else {
+                    let first = candidates[0].clone();
+                    self.completion = Some(Completion {
+                        candidates,
+                        index: 0,
+                    });
+                    first
+                }
+            }
+        }
+    }
+
+    /// Completion candidates to show next to the prompt, with the current one.
+    pub fn completions(&self) -> Option<(&[String], usize)> {
+        self.completion
+            .as_ref()
+            .map(|c| (c.candidates.as_slice(), c.index))
+    }
+
     fn on_prompt_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         let prompt = std::mem::replace(&mut self.prompt, Prompt::None);
         match prompt {
@@ -494,19 +586,21 @@ impl App {
                 }
             },
             Prompt::Command(mut text) => match key.code {
-                KeyCode::Esc => Vec::new(),
-                KeyCode::Enter => self.run_command(text.trim()),
-                KeyCode::Tab => {
-                    let matches = resources::complete(&text);
-                    if let [only] = matches[..] {
-                        text = only.to_owned();
-                    } else if !matches.is_empty() {
-                        self.flash(Status::info(matches.join("  ")));
-                    }
+                KeyCode::Esc => {
+                    self.completion = None;
+                    Vec::new()
+                }
+                KeyCode::Enter => {
+                    self.completion = None;
+                    self.run_command(text.trim())
+                }
+                KeyCode::Tab | KeyCode::BackTab => {
+                    text = self.complete(&text, key.code == KeyCode::Tab);
                     self.prompt = Prompt::Command(text);
                     Vec::new()
                 }
                 _ => {
+                    self.completion = None;
                     edit(&mut text, key);
                     self.prompt = Prompt::Command(text);
                     Vec::new()
@@ -768,6 +862,60 @@ mod tests {
         assert!(
             app.flash_message()
                 .is_some_and(|s| s.text.contains("restart foo.service: failed"))
+        );
+    }
+
+    #[test]
+    fn tab_completes_and_cycles() {
+        let mut app = App::new(Scope::System, None);
+        app.start();
+        app.update(key(':'));
+        for c in "ti".chars() {
+            app.update(key(c));
+        }
+        // `ti` → timers, timespan, timestamp: common prefix `time` first, then cycle.
+        app.update(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+        assert!(
+            matches!(&app.prompt, Prompt::Command(t) if t == "time"),
+            "{:?}",
+            app.prompt
+        );
+        app.update(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+        assert!(
+            matches!(&app.prompt, Prompt::Command(t) if t == "timers"),
+            "{:?}",
+            app.prompt
+        );
+        // Ambiguous: `se` → seats, security, sessions: cycle on repeated Tab.
+        app.update(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+        app.update(key(':'));
+        for c in "se".chars() {
+            app.update(key(c));
+        }
+        app.update(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+        assert!(
+            matches!(&app.prompt, Prompt::Command(t) if t == "seats"),
+            "{:?}",
+            app.prompt
+        );
+        app.update(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+        assert!(matches!(&app.prompt, Prompt::Command(t) if t == "security"));
+        app.update(Event::Key(KeyEvent::new(
+            KeyCode::BackTab,
+            KeyModifiers::SHIFT,
+        )));
+        assert!(matches!(&app.prompt, Prompt::Command(t) if t == "seats"));
+        // Common prefix first: `use` → user, userdb, users share `user`.
+        app.update(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+        app.update(key(':'));
+        for c in "use".chars() {
+            app.update(key(c));
+        }
+        app.update(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+        assert!(
+            matches!(&app.prompt, Prompt::Command(t) if t == "user"),
+            "{:?}",
+            app.prompt
         );
     }
 
