@@ -1,15 +1,24 @@
 //! The view abstraction: a [`Resource`] describes a table of rows, a [`View`]
 //! is something on the view stack that handles keys and draws itself.
 
+pub mod blame;
+pub mod boot;
+pub mod bus;
 pub mod coredumps;
 pub mod jobs;
 pub mod journal;
+pub mod links;
+pub mod machines;
+pub mod seats;
+pub mod security;
 pub mod sessions;
 pub mod sockets;
 pub mod text;
 pub mod timers;
 pub mod unit_detail;
 pub mod units;
+pub mod userdb;
+pub mod users;
 
 use std::{
     cmp::Ordering,
@@ -24,7 +33,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Row, Table, TableState},
 };
 
-use crate::systemd::journal::{JournalId, JournalItem};
+use crate::systemd::journal::{JournalId, JournalItem, JournalSpec, JournalTarget};
 use crate::{
     event::{Effect, Exec, Status},
     keys::{self, Action, Binding},
@@ -67,10 +76,6 @@ impl<'a> Ctx<'a> {
 
     pub fn push(&mut self, view: Box<dyn View>) {
         self.effect(Effect::Push(view));
-    }
-
-    pub fn pop(&mut self) {
-        self.effect(Effect::Pop);
     }
 
     pub fn status(&mut self, status: Status) {
@@ -119,6 +124,8 @@ pub struct Settings {
     pub show_all: bool,
     /// Restrict the units view to one unit type (`1`..`5`, `0` for all).
     pub kind: Option<UnitKind>,
+    /// Show the `systemd-analyze security` exposure column (`S`).
+    pub security: bool,
 }
 
 impl Settings {
@@ -140,24 +147,11 @@ impl Settings {
 pub struct Column {
     pub title: &'static str,
     pub width: Constraint,
-    /// Right-align numbers.
-    pub right: bool,
 }
 
 impl Column {
     pub const fn new(title: &'static str, width: Constraint) -> Self {
-        Self {
-            title,
-            width,
-            right: false,
-        }
-    }
-
-    pub const fn right(self) -> Self {
-        Self {
-            right: true,
-            ..self
-        }
+        Self { title, width }
     }
 }
 
@@ -220,9 +214,14 @@ pub trait Resource: 'static {
     /// Which column a sort action refers to, if any.
     fn sort_column(action: Action) -> Option<usize>;
 
-    /// Default sort column.
-    fn default_sort() -> usize {
-        0
+    /// Default sort column and whether it is descending.
+    fn default_sort() -> (usize, bool) {
+        (0, false)
+    }
+
+    /// Indices of the columns to show; lets a view hide optional columns.
+    fn active_columns(_settings: &Settings) -> Vec<usize> {
+        (0..Self::columns().len()).collect()
     }
 
     /// Plain-text search space for `/`.
@@ -258,6 +257,9 @@ pub trait View: Send {
     fn on_signal(&mut self, _signal: &SystemdSignal, _ctx: &mut Ctx<'_>) {}
 
     fn on_journal(&mut self, _id: JournalId, _item: JournalItem) {}
+
+    /// Output of a command this view asked for.
+    fn on_exec(&mut self, _id: u64, _output: &Result<String, String>) {}
 
     fn on_key(&mut self, key: &KeyEvent, ctx: &mut Ctx<'_>) -> Handled;
 
@@ -300,7 +302,7 @@ impl<R: Resource> Default for TableView<R> {
             selected_key: None,
             offset: 0,
             filter: String::new(),
-            sort: (R::default_sort(), false),
+            sort: R::default_sort(),
             last_fetch: vec![None; R::fetches().len()],
             refetch_pending: false,
             last_enrich: None,
@@ -522,14 +524,22 @@ impl<R: Resource> View for TableView<R> {
         self.clamp();
 
         let columns = R::columns();
-        let header = Row::new(columns.iter().enumerate().map(|(i, c)| {
-            Cell::from(format!("{}{}", c.title, self.sort_marker(i))).style(theme.header)
+        let active = R::active_columns(ctx.settings);
+        let header = Row::new(active.iter().map(|&i| {
+            Cell::from(format!("{}{}", columns[i].title, self.sort_marker(i))).style(theme.header)
         }));
         let end = (self.offset + self.last_height).min(self.visible.len());
-        let rows = self.visible[self.offset..end]
-            .iter()
-            .map(|&i| Row::new(R::cells(&self.rows[i], theme)));
-        let widths: Vec<Constraint> = columns.iter().map(|c| c.width).collect();
+        let rows = self.visible[self.offset..end].iter().map(|&i| {
+            let cells = R::cells(&self.rows[i], theme);
+            Row::new(
+                cells
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(j, _)| active.contains(j))
+                    .map(|(_, c)| c),
+            )
+        });
+        let widths: Vec<Constraint> = active.iter().map(|&i| columns[i].width).collect();
         let table = Table::new(rows, widths)
             .header(header)
             .block(block)
@@ -545,7 +555,7 @@ impl<R: Resource> View for TableView<R> {
 struct Entry {
     name: &'static str,
     aliases: &'static [&'static str],
-    open: fn() -> Box<dyn View>,
+    open: fn(Scope) -> Box<dyn View>,
 }
 
 macro_rules! entry {
@@ -553,7 +563,7 @@ macro_rules! entry {
         Entry {
             name: <$res>::NAME,
             aliases: <$res>::ALIASES,
-            open: TableView::<$res>::boxed,
+            open: |_| TableView::<$res>::boxed(),
         }
     };
 }
@@ -565,14 +575,49 @@ const REGISTRY: &[Entry] = &[
     entry!(jobs::JobsResource),
     entry!(coredumps::CoredumpsResource),
     entry!(sessions::SessionsResource),
+    entry!(users::UsersResource),
+    entry!(seats::SeatsResource),
+    entry!(machines::MachinesResource),
+    entry!(links::LinksResource),
+    entry!(boot::BootResource),
+    entry!(security::SecurityResource),
+    entry!(blame::BlameResource),
+    entry!(bus::BusResource),
+    entry!(userdb::UserdbResource),
+    entry!(userdb::GroupsResource),
+    Entry {
+        name: "info",
+        aliases: &["system-info", "hostnamectl"],
+        open: info_view,
+    },
+    Entry {
+        name: "journal",
+        aliases: &["logs", "log"],
+        open: journal_view,
+    },
 ];
 
+/// `:journal` — everything, not just one unit.
+fn journal_view(scope: Scope) -> Box<dyn View> {
+    journal::JournalView::boxed(JournalSpec {
+        scope,
+        target: JournalTarget::All,
+        lines: 500,
+    })
+}
+
+/// `:info` — the one-shot status tools, concatenated.
+fn info_view(_scope: Scope) -> Box<dyn View> {
+    const SCRIPT: &str = r#"for c in hostnamectl timedatectl "localectl status" "resolvectl status" "systemd-analyze time" "oomctl dump"; do echo "== $c"; $c 2>&1; echo; done"#;
+    text::TextView::command("info", Exec::shell(SCRIPT, "system info"))
+}
+
 /// Open the view registered under `name` or one of its aliases.
-pub fn lookup(name: &str) -> Option<Box<dyn View>> {
+pub fn lookup(name: &str, scope: Scope) -> Option<Box<dyn View>> {
     REGISTRY
         .iter()
         .find(|e| e.name == name || e.aliases.contains(&name))
-        .map(|e| (e.open)())
+        .map(|e| (e.open)(scope))
 }
 
 /// Canonical view names, for help and completion.

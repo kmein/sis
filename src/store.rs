@@ -1,6 +1,6 @@
 //! Cached data shared by all views, filled by fetches.
 
-use std::{collections::HashMap, time::Instant};
+use std::collections::HashMap;
 
 use serde::Deserialize;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue};
@@ -24,6 +24,171 @@ pub enum ViewData {
     Jobs(Vec<JobRow>),
     Coredumps(Vec<CoredumpRow>),
     Sessions(Vec<SessionRow>),
+    Users(Vec<UserRow>),
+    Seats(Vec<SeatRow>),
+    Machines(Vec<MachineRow>),
+    Links(Vec<LinkRow>),
+    Boot(Vec<BootRow>),
+    Security(Vec<SecurityRow>),
+    Blame(Vec<BlameRow>),
+    Bus(Vec<BusRow>),
+    Userdb(Vec<UserdbRow>),
+    Groups(Vec<GroupRow>),
+}
+
+/// `loginctl list-users --json=short`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct UserRow {
+    pub uid: u32,
+    pub user: String,
+    #[serde(default)]
+    pub linger: bool,
+    #[serde(default)]
+    pub state: String,
+}
+
+/// `loginctl list-seats --json=short`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SeatRow {
+    pub seat: String,
+}
+
+/// `machinectl list --output=json`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MachineRow {
+    pub machine: String,
+    #[serde(default)]
+    pub class: Option<String>,
+    #[serde(default)]
+    pub service: Option<String>,
+    #[serde(default)]
+    pub os: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub addresses: Option<serde_json::Value>,
+}
+
+/// One interface of `networkctl list --json=short`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct LinkRow {
+    pub index: u32,
+    pub name: String,
+    #[serde(default, rename = "Type")]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub operational_state: Option<String>,
+    #[serde(default)]
+    pub administrative_state: Option<String>,
+    #[serde(default)]
+    pub carrier_state: Option<String>,
+    #[serde(default)]
+    pub online_state: Option<String>,
+    #[serde(default, rename = "MTU")]
+    pub mtu: Option<u32>,
+    #[serde(default)]
+    pub driver: Option<String>,
+    #[serde(default)]
+    pub network_file: Option<String>,
+}
+
+/// `bootctl list --json=short`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BootRow {
+    pub id: String,
+    #[serde(default, rename = "type")]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub show_title: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub is_default: bool,
+    #[serde(default)]
+    pub is_selected: bool,
+    #[serde(default)]
+    pub is_reported: bool,
+    /// Everything else, for the detail text.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// `systemd-analyze security --json=short`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SecurityRow {
+    pub unit: String,
+    #[serde(default)]
+    pub exposure: String,
+    #[serde(default)]
+    pub predicate: String,
+    #[serde(default)]
+    pub happy: String,
+}
+
+/// One line of `systemd-analyze blame`.
+#[derive(Debug, Clone)]
+pub struct BlameRow {
+    pub unit: String,
+    pub usec: u64,
+    pub text: String,
+}
+
+/// `busctl list --json=short`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BusRow {
+    pub name: String,
+    #[serde(default)]
+    pub pid: Option<u32>,
+    #[serde(default)]
+    pub process: Option<String>,
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub connection: Option<String>,
+    #[serde(default)]
+    pub unit: Option<String>,
+    #[serde(default)]
+    pub session: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// `userdbctl user --json=short`, one object per line.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserdbRow {
+    pub user_name: String,
+    #[serde(default)]
+    pub uid: u32,
+    #[serde(default)]
+    pub gid: u32,
+    #[serde(default)]
+    pub real_name: Option<String>,
+    #[serde(default)]
+    pub home_directory: Option<String>,
+    #[serde(default)]
+    pub shell: Option<String>,
+    #[serde(default)]
+    pub disposition: Option<String>,
+}
+
+/// `userdbctl group --json=short`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupRow {
+    pub group_name: String,
+    #[serde(default)]
+    pub gid: u32,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub disposition: Option<String>,
 }
 
 /// `systemctl list-timers --output=json`.
@@ -32,11 +197,7 @@ pub struct TimerRow {
     #[serde(default)]
     pub next: Option<u64>,
     #[serde(default)]
-    pub left: Option<u64>,
-    #[serde(default)]
     pub last: Option<u64>,
-    #[serde(default)]
-    pub passed: Option<u64>,
     pub unit: String,
     #[serde(default)]
     pub activates: Option<String>,
@@ -72,8 +233,6 @@ pub struct CoredumpRow {
     pub pid: u32,
     #[serde(default)]
     pub uid: u32,
-    #[serde(default)]
-    pub gid: u32,
     #[serde(default)]
     pub sig: Option<i64>,
     #[serde(default)]
@@ -120,7 +279,6 @@ pub struct UnitDetail {
     pub processes: Vec<Process>,
     /// Unit file and drop-ins: path and contents (or the read error).
     pub files: Vec<(String, Result<String, String>)>,
-    pub fetched_at: Instant,
 }
 
 /// Which slot a [`ViewData`] fills; what views get told about.
@@ -136,6 +294,16 @@ pub enum DataKind {
     Jobs,
     Coredumps,
     Sessions,
+    Users,
+    Seats,
+    Machines,
+    Links,
+    Boot,
+    Security,
+    Blame,
+    Bus,
+    Userdb,
+    Groups,
 }
 
 impl ViewData {
@@ -151,6 +319,16 @@ impl ViewData {
             Self::Jobs(_) => DataKind::Jobs,
             Self::Coredumps(_) => DataKind::Coredumps,
             Self::Sessions(_) => DataKind::Sessions,
+            Self::Users(_) => DataKind::Users,
+            Self::Seats(_) => DataKind::Seats,
+            Self::Machines(_) => DataKind::Machines,
+            Self::Links(_) => DataKind::Links,
+            Self::Boot(_) => DataKind::Boot,
+            Self::Security(_) => DataKind::Security,
+            Self::Blame(_) => DataKind::Blame,
+            Self::Bus(_) => DataKind::Bus,
+            Self::Userdb(_) => DataKind::Userdb,
+            Self::Groups(_) => DataKind::Groups,
         }
     }
 }
@@ -178,6 +356,17 @@ pub struct Store {
     pub jobs: Vec<JobRow>,
     pub coredumps: Vec<CoredumpRow>,
     pub sessions: Vec<SessionRow>,
+    pub users: Vec<UserRow>,
+    pub seats: Vec<SeatRow>,
+    pub machines: Vec<MachineRow>,
+    pub links: Vec<LinkRow>,
+    pub boot: Vec<BootRow>,
+    /// Unit name → security row.
+    pub security: HashMap<String, SecurityRow>,
+    pub blame: Vec<BlameRow>,
+    pub bus: Vec<BusRow>,
+    pub userdb: Vec<UserdbRow>,
+    pub groups: Vec<GroupRow>,
 }
 
 impl Store {
@@ -204,6 +393,18 @@ impl Store {
             ViewData::Jobs(rows) => self.jobs = rows,
             ViewData::Coredumps(rows) => self.coredumps = rows,
             ViewData::Sessions(rows) => self.sessions = rows,
+            ViewData::Users(rows) => self.users = rows,
+            ViewData::Seats(rows) => self.seats = rows,
+            ViewData::Machines(rows) => self.machines = rows,
+            ViewData::Links(rows) => self.links = rows,
+            ViewData::Boot(rows) => self.boot = rows,
+            ViewData::Security(rows) => {
+                self.security = rows.into_iter().map(|r| (r.unit.clone(), r)).collect()
+            }
+            ViewData::Blame(rows) => self.blame = rows,
+            ViewData::Bus(rows) => self.bus = rows,
+            ViewData::Userdb(rows) => self.userdb = rows,
+            ViewData::Groups(rows) => self.groups = rows,
         }
     }
 

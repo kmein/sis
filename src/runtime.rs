@@ -167,7 +167,6 @@ impl Runtime {
                     });
                 }
                 Effect::SwitchScope(scope) => self.switch_scope(scope),
-                Effect::Quit => self.app.should_quit = true,
                 Effect::Push(_) | Effect::Pop | Effect::Status(_) | Effect::Confirm { .. } => {
                     error!("UI effect reached the runtime; the app should have consumed it");
                 }

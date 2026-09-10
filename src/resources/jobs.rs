@@ -20,7 +20,7 @@ use crate::{
 pub struct JobsResource;
 
 const COLUMNS: &[Column] = &[
-    Column::new("JOB", Constraint::Length(8)).right(),
+    Column::new("JOB", Constraint::Length(8)),
     Column::new("UNIT", Constraint::Min(30)),
     Column::new("TYPE", Constraint::Length(20)),
     Column::new("STATE", Constraint::Fill(1)),

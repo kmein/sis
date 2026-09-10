@@ -88,8 +88,8 @@ impl Resource for SocketsResource {
         }
     }
 
-    fn default_sort() -> usize {
-        1
+    fn default_sort() -> (usize, bool) {
+        (1, false)
     }
 
     fn matches(r: &SocketRow, needle: &str) -> bool {

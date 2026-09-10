@@ -133,14 +133,14 @@ impl App {
 
     /// Open the root view; returns the fetches it needs.
     pub fn start(&mut self) -> Vec<Effect> {
-        let view = match resources::lookup(&self.initial_view) {
+        let view = match resources::lookup(&self.initial_view, self.scope) {
             Some(view) => view,
             None => {
                 self.flash(Status::error(format!(
                     "no such view: {}",
                     self.initial_view
                 )));
-                resources::lookup("units").expect("the units view exists")
+                resources::lookup("units", self.scope).expect("the units view exists")
             }
         };
         let mut effects = self.apply(vec![Effect::Push(view)]);
@@ -200,6 +200,13 @@ impl App {
             Event::BackendReady(backend) => self.on_backend(backend),
             Event::Signal(signal) => self.on_signal(signal),
             Event::Exec { exec, output } => match (exec.title, output) {
+                (_, output) if exec.deliver.is_some() => {
+                    let id = exec.deliver.expect("checked");
+                    for view in &mut self.views {
+                        view.on_exec(id, &output);
+                    }
+                    Vec::new()
+                }
                 (Some(title), Ok(text)) => {
                     self.apply(vec![Effect::Push(TextView::boxed(title, &text))])
                 }
@@ -367,6 +374,14 @@ impl App {
                 self.settings.show_all = !self.settings.show_all;
                 self.settings_changed()
             }
+            Action::ToggleSecurity => {
+                self.settings.security = !self.settings.security;
+                let mut effects = self.settings_changed();
+                if self.settings.security && self.store.security.is_empty() {
+                    effects.push(Effect::Fetch(FetchKind::Security));
+                }
+                effects
+            }
             action if Settings::kind_for(action).is_some() => {
                 self.settings.kind = Settings::kind_for(action).flatten();
                 self.settings_changed()
@@ -456,7 +471,7 @@ impl App {
                 self.settings.show_all = !self.settings.show_all;
                 self.settings_changed()
             }
-            _ => match resources::lookup(name) {
+            _ => match resources::lookup(name, self.scope) {
                 Some(view) => {
                     // A command replaces the stack: `:timers` is a place, not a drill-down.
                     let mut ctx = Ctx::new(&self.store, &self.settings, self.scope, &self.theme);
@@ -466,11 +481,10 @@ impl App {
                     let mut effects = ctx.finish();
                     self.views.clear();
                     effects.push(Effect::Push(view));
-                    let mut effects = self.apply(effects);
+                    let effects = self.apply(effects);
                     if !arg.is_empty() {
                         self.views.last_mut().expect("a view").set_filter(arg);
                     }
-                    effects.retain(|e| !matches!(e, Effect::Quit));
                     effects
                 }
                 None => {
@@ -516,7 +530,6 @@ impl App {
                         }
                     }
                     Effect::Status(status) => self.flash(status),
-                    Effect::Quit => self.should_quit = true,
                     Effect::Confirm { text, effect } => {
                         self.prompt = Prompt::Confirm {
                             text,
@@ -528,10 +541,15 @@ impl App {
                         out.push(Effect::Perform { action, unit });
                     }
                     Effect::Exec(exec) => {
-                        if exec.title.is_none() {
-                            self.flash(Status::info(format!("{}…", exec.describe)));
+                        if let Some(title) = exec.title.clone() {
+                            // Show it in a view that loads (and reloads) itself.
+                            next.push(Effect::Push(TextView::command(title, exec)));
+                        } else {
+                            if exec.deliver.is_none() {
+                                self.flash(Status::info(format!("{}…", exec.describe)));
+                            }
+                            out.push(Effect::Exec(exec));
                         }
-                        out.push(Effect::Exec(exec));
                     }
                     other => out.push(other),
                 }
@@ -657,7 +675,6 @@ mod tests {
         app.start();
         let job = OwnedObjectPath::try_from("/org/freedesktop/systemd1/job/42").unwrap();
         app.update(Event::Signal(SystemdSignal::JobRemoved {
-            id: 42,
             job: job.clone(),
             unit: "foo.service".into(),
             result: "failed".into(),

@@ -20,11 +20,65 @@ use super::{
 };
 use super::{
     Scope,
-    subprocess::{JsonShape, run_json},
+    subprocess::{JsonShape, run, run_json},
 };
 use crate::store::{
-    CoredumpRow, JobRow, ManagerInfo, SessionRow, SocketRow, TimerRow, UnitDetail, ViewData,
+    BlameRow, CoredumpRow, JobRow, ManagerInfo, SessionRow, SocketRow, TimerRow, UnitDetail,
+    ViewData,
 };
+
+/// `4min 34.207s restic-backups.service` → a row.
+fn parse_blame_line(line: &str) -> Option<BlameRow> {
+    let line = line.trim();
+    let (span, unit) = line.rsplit_once(' ')?;
+    let usec = parse_timespan(span)?;
+    Some(BlameRow {
+        unit: unit.to_owned(),
+        usec,
+        text: span.trim().to_owned(),
+    })
+}
+
+/// systemd's `format_timespan` output (`1h 2min 3.456s`, `23us`) in µs.
+pub fn parse_timespan(text: &str) -> Option<u64> {
+    let mut total = 0f64;
+    for token in text.split_whitespace() {
+        let split = token.find(|c: char| c.is_ascii_alphabetic() || c == 'µ')?;
+        let (num, suffix) = token.split_at(split);
+        let n: f64 = num.parse().ok()?;
+        let factor = match suffix {
+            "y" => 365.25 * 86_400e6,
+            "month" => 30.44 * 86_400e6,
+            "w" => 7.0 * 86_400e6,
+            "d" => 86_400e6,
+            "h" => 3_600e6,
+            "min" => 60e6,
+            "s" => 1e6,
+            "ms" => 1e3,
+            "us" | "µs" => 1.0,
+            "ns" => 1e-3,
+            _ => return None,
+        };
+        total += n * factor;
+    }
+    Some(total as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timespans() {
+        assert_eq!(parse_timespan("23us"), Some(23));
+        assert_eq!(parse_timespan("18.350s"), Some(18_350_000));
+        assert_eq!(parse_timespan("4min 34.207s"), Some(274_207_000));
+        assert_eq!(parse_timespan("1h 2min"), Some(3_720_000_000));
+        let row = parse_blame_line("     18.350s nixos-upgrade.service").unwrap();
+        assert_eq!(row.unit, "nixos-upgrade.service");
+        assert_eq!(row.text, "18.350s");
+    }
+}
 
 fn args(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| (*s).to_owned()).collect()
@@ -53,6 +107,16 @@ pub enum FetchKind {
     Jobs,
     Coredumps,
     Sessions,
+    Users,
+    Seats,
+    Machines,
+    Links,
+    Boot,
+    Security,
+    Blame,
+    Bus,
+    Userdb,
+    Groups,
 }
 
 impl FetchKind {
@@ -161,6 +225,87 @@ impl FetchKind {
                 .await?;
                 ViewData::Sessions(rows)
             }
+            Self::Users => ViewData::Users(
+                run_json(
+                    "loginctl",
+                    &args(&["list-users", "--json=short", "--no-pager"]),
+                    JsonShape::Array,
+                )
+                .await?,
+            ),
+            Self::Seats => ViewData::Seats(
+                run_json(
+                    "loginctl",
+                    &args(&["list-seats", "--json=short", "--no-pager"]),
+                    JsonShape::Array,
+                )
+                .await?,
+            ),
+            Self::Machines => ViewData::Machines(
+                run_json(
+                    "machinectl",
+                    &args(&["list", "--output=json", "--no-pager"]),
+                    JsonShape::Array,
+                )
+                .await?,
+            ),
+            Self::Links => ViewData::Links(
+                run_json(
+                    "networkctl",
+                    &args(&["list", "--json=short", "--no-pager"]),
+                    JsonShape::ObjectKey("Interfaces"),
+                )
+                .await?,
+            ),
+            Self::Boot => ViewData::Boot(
+                run_json(
+                    "bootctl",
+                    &args(&["list", "--json=short", "--no-pager"]),
+                    JsonShape::Array,
+                )
+                .await?,
+            ),
+            Self::Security => ViewData::Security(
+                run_json(
+                    "systemd-analyze",
+                    &scoped(backend.scope, &["security", "--json=short", "--no-pager"]),
+                    JsonShape::Array,
+                )
+                .await?,
+            ),
+            Self::Blame => {
+                let text = run(
+                    "systemd-analyze",
+                    &scoped(backend.scope, &["blame", "--no-pager"]),
+                )
+                .await
+                .map_err(|e| eyre::eyre!(e))?;
+                ViewData::Blame(text.lines().filter_map(parse_blame_line).collect())
+            }
+            Self::Bus => ViewData::Bus(
+                run_json(
+                    "busctl",
+                    &scoped(backend.scope, &["list", "--json=short", "--no-pager"]),
+                    JsonShape::Array,
+                )
+                .await?,
+            ),
+            Self::Userdb => ViewData::Userdb(
+                run_json(
+                    "userdbctl",
+                    &args(&["user", "--json=short", "--no-pager"]),
+                    JsonShape::Lines,
+                )
+                .await?,
+            ),
+            Self::Groups => ViewData::Groups(
+                run_json(
+                    "userdbctl",
+                    &args(&["group", "--json=short", "--no-pager"]),
+                    JsonShape::Lines,
+                )
+                .await?,
+            ),
         };
         debug!(kind = ?self, elapsed = ?started.elapsed(), "fetched");
         Ok(data)
@@ -179,10 +324,10 @@ pub async fn properties(
         .build()
         .await?;
     let name = InterfaceName::try_from(iface.to_owned())?;
-    Ok(proxy
+    proxy
         .get_all(name)
         .await
-        .with_context(|| format!("GetAll {iface} on {path}"))?)
+        .with_context(|| format!("GetAll {iface} on {path}"))
 }
 
 /// Read a numeric property, treating systemd's `u64::MAX` "unset" as absent.
@@ -252,9 +397,7 @@ pub async fn enrich(
                 active_enter: prop_u64(&unit, "ActiveEnterTimestamp").unwrap_or(0),
                 state_change: prop_u64(&unit, "StateChangeTimestamp").unwrap_or(0),
                 main_pid: prop_u32(&typed, "MainPID").or_else(|| prop_u32(&typed, "ControlPID")),
-                n_restarts: prop_u32(&typed, "NRestarts"),
                 memory_current: prop_u64(&typed, "MemoryCurrent"),
-                tasks_current: prop_u64(&typed, "TasksCurrent"),
                 need_daemon_reload: prop_bool(&unit, "NeedDaemonReload").unwrap_or(false),
             },
         ));
@@ -322,6 +465,5 @@ async fn detail(backend: &Backend, name: &str, path: &OwnedObjectPath) -> Result
         typed,
         processes,
         files,
-        fetched_at: Instant::now(),
     })
 }

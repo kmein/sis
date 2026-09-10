@@ -23,9 +23,9 @@ pub struct TimersResource;
 const COLUMNS: &[Column] = &[
     Column::new("UNIT", Constraint::Min(24)),
     Column::new("NEXT", Constraint::Length(24)),
-    Column::new("LEFT", Constraint::Length(8)).right(),
+    Column::new("LEFT", Constraint::Length(8)),
     Column::new("LAST", Constraint::Length(24)),
-    Column::new("PASSED", Constraint::Length(8)).right(),
+    Column::new("PASSED", Constraint::Length(8)),
     Column::new("ACTIVATES", Constraint::Fill(1)),
 ];
 
@@ -107,8 +107,8 @@ impl Resource for TimersResource {
         }
     }
 
-    fn default_sort() -> usize {
-        1
+    fn default_sort() -> (usize, bool) {
+        (1, false)
     }
 
     fn matches(r: &TimerRow, needle: &str) -> bool {

@@ -77,7 +77,6 @@ pub enum Effect {
     /// otherwise report success or failure in the status line.
     Exec(Exec),
     SwitchScope(Scope),
-    Quit,
     Push(Box<dyn View>),
     Pop,
     Status(Status),
@@ -96,6 +95,8 @@ pub struct Exec {
     pub title: Option<String>,
     /// What to call it in the status line.
     pub describe: String,
+    /// Deliver the output to the text view with this id instead of flashing.
+    pub deliver: Option<u64>,
 }
 
 impl Exec {
@@ -105,6 +106,18 @@ impl Exec {
             args: args.iter().map(|a| (*a).to_owned()).collect(),
             title: None,
             describe: format!("{program} {}", args.join(" ")),
+            deliver: None,
+        }
+    }
+
+    /// A shell snippet, described by `describe`.
+    pub fn shell(script: &str, describe: &str) -> Self {
+        Self {
+            program: "sh".to_owned(),
+            args: vec!["-c".to_owned(), script.to_owned()],
+            title: None,
+            describe: describe.to_owned(),
+            deliver: None,
         }
     }
 

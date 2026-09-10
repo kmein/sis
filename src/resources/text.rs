@@ -10,7 +10,10 @@ use ratatui::{
 };
 
 use super::{Ctx, Handled, View};
-use crate::keys::{self, Action, Binding, Key};
+use crate::{
+    event::{Effect, Exec},
+    keys::{self, Action, Binding, Key},
+};
 
 /// The state shared by all text panes.
 #[derive(Default)]
@@ -101,10 +104,13 @@ impl TextPane {
 
 const BINDINGS: &[Binding] = &[Binding::new(Key::ch('w'), Action::ToggleWrap, "Wrap")];
 
-/// A plain text view with a title.
+/// A plain text view with a title, optionally (re)loaded from a command.
 pub struct TextView {
     title: String,
     pane: TextPane,
+    source: Option<Exec>,
+    id: u64,
+    loaded: bool,
 }
 
 impl TextView {
@@ -114,12 +120,41 @@ impl TextView {
         Self {
             title: title.into(),
             pane,
+            source: None,
+            id: next_id(),
+            loaded: true,
         }
     }
 
     pub fn boxed(title: impl Into<String>, text: &str) -> Box<dyn View> {
         Box::new(Self::new(title, text))
     }
+
+    /// A view showing a command's output; `ctrl-r` runs it again.
+    pub fn command(title: impl Into<String>, exec: Exec) -> Box<dyn View> {
+        Box::new(Self {
+            title: title.into(),
+            pane: TextPane::default(),
+            source: Some(exec),
+            id: next_id(),
+            loaded: false,
+        })
+    }
+
+    fn reload(&mut self, ctx: &mut Ctx<'_>) {
+        if let Some(exec) = &self.source {
+            let mut exec = exec.clone();
+            exec.title = None;
+            exec.deliver = Some(self.id);
+            ctx.effect(Effect::Exec(exec));
+        }
+    }
+}
+
+fn next_id() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(1);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
 impl View for TextView {
@@ -131,11 +166,25 @@ impl View for TextView {
         BINDINGS
     }
 
-    fn on_enter(&mut self, _ctx: &mut Ctx<'_>) {}
+    fn on_enter(&mut self, ctx: &mut Ctx<'_>) {
+        self.reload(ctx);
+    }
 
     fn on_data(&mut self, _kind: crate::store::DataKind, _ctx: &mut Ctx<'_>) {}
 
     fn on_tick(&mut self, _ctx: &mut Ctx<'_>) {}
+
+    fn on_exec(&mut self, id: u64, output: &Result<String, String>) {
+        if id != self.id {
+            return;
+        }
+        self.loaded = true;
+        let lines = match output {
+            Ok(text) => text.lines().map(|l| Line::raw(l.to_owned())).collect(),
+            Err(err) => err.lines().map(|l| Line::raw(l.to_owned())).collect(),
+        };
+        self.pane.set_lines(lines);
+    }
 
     fn on_key(&mut self, key: &KeyEvent, _ctx: &mut Ctx<'_>) -> Handled {
         match keys::lookup(BINDINGS, key) {
@@ -144,7 +193,11 @@ impl View for TextView {
         }
     }
 
-    fn on_global(&mut self, action: Action, _ctx: &mut Ctx<'_>) -> Handled {
+    fn on_global(&mut self, action: Action, ctx: &mut Ctx<'_>) -> Handled {
+        if action == Action::Refresh && self.source.is_some() {
+            self.reload(ctx);
+            return Handled::Yes;
+        }
         self.pane.on_global(action)
     }
 

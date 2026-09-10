@@ -18,11 +18,11 @@ pub struct CoredumpsResource;
 
 const COLUMNS: &[Column] = &[
     Column::new("TIME", Constraint::Length(24)),
-    Column::new("PID", Constraint::Length(8)).right(),
-    Column::new("UID", Constraint::Length(6)).right(),
+    Column::new("PID", Constraint::Length(8)),
+    Column::new("UID", Constraint::Length(6)),
     Column::new("SIG", Constraint::Length(8)),
     Column::new("COREFILE", Constraint::Length(9)),
-    Column::new("SIZE", Constraint::Length(8)).right(),
+    Column::new("SIZE", Constraint::Length(8)),
     Column::new("EXE", Constraint::Fill(1)),
 ];
 
@@ -108,6 +108,10 @@ impl Resource for CoredumpsResource {
             5 => r.size.map_or(SortKey::None, |s| SortKey::Num(s as i128)),
             _ => SortKey::Str(r.exe.clone().unwrap_or_default()),
         }
+    }
+
+    fn default_sort() -> (usize, bool) {
+        (0, true)
     }
 
     fn sort_column(action: Action) -> Option<usize> {

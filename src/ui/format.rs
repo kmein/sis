@@ -98,26 +98,6 @@ pub fn bytes(n: u64) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn durations() {
-        assert_eq!(duration_secs(5), "5s");
-        assert_eq!(duration_secs(65), "1m5s");
-        assert_eq!(duration_secs(15 * 60), "15m");
-        assert_eq!(duration_secs(3_600 * 3 + 120), "3h2m");
-        assert_eq!(duration_secs(86_400 * 2 + 3_600 * 4), "2d4h");
-    }
-
-    #[test]
-    fn byte_sizes() {
-        assert_eq!(bytes(512), "512B");
-        assert_eq!(bytes(9_580_544), "9.1M");
-    }
-}
-
 /// Render a D-Bus value the way `systemctl show` roughly would.
 pub fn value(v: &Value<'_>) -> String {
     match v {
@@ -189,5 +169,25 @@ pub fn cpu_ns(ns: u64) -> String {
             (secs / 3600.0) as u64,
             ((secs % 3600.0) / 60.0) as u64
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn durations() {
+        assert_eq!(duration_secs(5), "5s");
+        assert_eq!(duration_secs(65), "1m5s");
+        assert_eq!(duration_secs(15 * 60), "15m");
+        assert_eq!(duration_secs(3_600 * 3 + 120), "3h2m");
+        assert_eq!(duration_secs(86_400 * 2 + 3_600 * 4), "2d4h");
+    }
+
+    #[test]
+    fn byte_sizes() {
+        assert_eq!(bytes(512), "512B");
+        assert_eq!(bytes(9_580_544), "9.1M");
     }
 }

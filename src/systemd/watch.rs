@@ -23,11 +23,9 @@ pub enum SystemdSignal {
     UnitNew(String),
     UnitRemoved(String),
     JobNew {
-        id: u32,
         unit: String,
     },
     JobRemoved {
-        id: u32,
         job: OwnedObjectPath,
         unit: String,
         result: String,
@@ -85,12 +83,8 @@ pub async fn start(backend: Arc<Backend>, tx: Sender<Event>) -> Result<Vec<JoinH
     }
     forward!(unit_new, |a| SystemdSignal::UnitNew(a.id));
     forward!(unit_removed, |a| SystemdSignal::UnitRemoved(a.id));
-    forward!(job_new, |a| SystemdSignal::JobNew {
-        id: a.id,
-        unit: a.unit
-    });
+    forward!(job_new, |a| SystemdSignal::JobNew { unit: a.unit });
     forward!(job_removed, |a| SystemdSignal::JobRemoved {
-        id: a.id,
         job: a.job,
         unit: a.unit,
         result: a.result

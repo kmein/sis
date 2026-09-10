@@ -18,10 +18,10 @@ pub struct SessionsResource;
 
 const COLUMNS: &[Column] = &[
     Column::new("SESSION", Constraint::Length(8)),
-    Column::new("UID", Constraint::Length(6)).right(),
+    Column::new("UID", Constraint::Length(6)),
     Column::new("USER", Constraint::Length(12)),
     Column::new("SEAT", Constraint::Length(8)),
-    Column::new("LEADER", Constraint::Length(8)).right(),
+    Column::new("LEADER", Constraint::Length(8)),
     Column::new("CLASS", Constraint::Length(12)),
     Column::new("TTY", Constraint::Length(8)),
     Column::new("IDLE", Constraint::Length(5)),

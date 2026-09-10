@@ -32,6 +32,7 @@ pub struct ListedUnit(
 
 /// One row of `Manager.ListJobs`: `(usssoo)`.
 #[derive(Debug, Clone, Deserialize, Type)]
+#[allow(dead_code)] // mirrors the wire format
 pub struct ListedJob(
     /// Job id.
     pub u32,
@@ -60,6 +61,7 @@ pub struct Process(
 
 /// One row of the change lists returned by `*UnitFiles`: `(sss)`.
 #[derive(Debug, Clone, Deserialize, Type)]
+#[allow(dead_code)] // mirrors the wire format
 pub struct EnableChange(
     /// Change type (symlink, unlink).
     pub String,

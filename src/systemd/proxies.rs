@@ -3,12 +3,7 @@
 //! Property-returning methods are deliberately kept to what the header and
 //! table need; the detail view reads everything through `Properties.GetAll`.
 
-use std::collections::HashMap;
-
-use zbus::{
-    proxy,
-    zvariant::{OwnedObjectPath, OwnedValue},
-};
+use zbus::{proxy, zvariant::OwnedObjectPath};
 
 use super::types::{EnableChange, ListedJob, ListedUnit, Process};
 
@@ -211,6 +206,3 @@ pub trait Socket {
     #[zbus(property, name = "NAccepted")]
     fn n_accepted(&self) -> zbus::Result<u32>;
 }
-
-/// Convenience alias for a `Properties.GetAll` result.
-pub type PropertyMap = HashMap<String, OwnedValue>;

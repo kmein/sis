@@ -58,11 +58,15 @@ const COLUMNS: &[Column] = &[
     Column::new("SUB", Constraint::Length(12)),
     Column::new("ENABLED", Constraint::Length(10)),
     Column::new("JOB", Constraint::Length(8)),
-    Column::new("SINCE", Constraint::Length(7)).right(),
-    Column::new("PID", Constraint::Length(7)).right(),
-    Column::new("MEM", Constraint::Length(8)).right(),
+    Column::new("SINCE", Constraint::Length(7)),
+    Column::new("PID", Constraint::Length(7)),
+    Column::new("MEM", Constraint::Length(8)),
     Column::new("DESCRIPTION", Constraint::Fill(1)),
+    Column::new("SEC", Constraint::Length(12)),
 ];
+
+/// Index of the optional security column.
+const SEC: usize = 11;
 
 const BINDINGS: &[Binding] = &[
     Binding::new(
@@ -120,6 +124,10 @@ impl Resource for UnitsResource {
                 let mut u = u.clone();
                 u.file_state = store.unit_files.get(&u.name).cloned();
                 u.enrich = store.enrichment.get(&u.name).cloned();
+                u.exposure = store
+                    .security
+                    .get(&u.name)
+                    .map(|s| format!("{} {}", s.exposure, s.predicate));
                 u
             })
             .collect()
@@ -142,7 +150,11 @@ impl Resource for UnitsResource {
         vec![
             Cell::from(u.name.clone()).style(theme.name),
             Cell::from(u.kind.as_str().to_owned()),
-            Cell::from(u.load.as_str().to_owned()).style(theme.load(&u.load)),
+            if enrich.is_some_and(|e| e.need_daemon_reload) {
+                Cell::from(format!("{}*", u.load)).style(theme.warn)
+            } else {
+                Cell::from(u.load.as_str().to_owned()).style(theme.load(&u.load))
+            },
             Cell::from(u.active.as_str().to_owned()).style(active),
             Cell::from(u.sub.clone()).style(active),
             Cell::from(u.file_state.clone().unwrap_or_default())
@@ -164,7 +176,15 @@ impl Resource for UnitsResource {
                     .unwrap_or_default(),
             ),
             Cell::from(u.description.clone()).style(theme.dim),
+            Cell::from(u.exposure.clone().unwrap_or_default())
+                .style(theme.exposure(u.exposure.as_deref())),
         ]
+    }
+
+    fn active_columns(settings: &Settings) -> Vec<usize> {
+        (0..COLUMNS.len())
+            .filter(|&i| i != SEC || settings.security)
+            .collect()
     }
 
     fn sort_key(u: &Unit, col: usize) -> SortKey {

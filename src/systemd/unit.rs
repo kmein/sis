@@ -22,6 +22,8 @@ pub struct Unit {
     pub file_state: Option<String>,
     /// Lazily fetched per-unit properties.
     pub enrich: Option<Enrichment>,
+    /// `systemd-analyze security` score, when the column is on.
+    pub exposure: Option<String>,
 }
 
 /// Per-unit properties that need a round trip each.
@@ -33,9 +35,8 @@ pub struct Enrichment {
     /// `StateChangeTimestamp` in µs since the epoch; 0 if never.
     pub state_change: u64,
     pub main_pid: Option<u32>,
-    pub n_restarts: Option<u32>,
     pub memory_current: Option<u64>,
-    pub tasks_current: Option<u64>,
+    /// The unit file changed on disk since it was loaded.
     pub need_daemon_reload: bool,
 }
 
@@ -65,6 +66,7 @@ impl Unit {
             path,
             file_state: None,
             enrich: None,
+            exposure: None,
         }
     }
 

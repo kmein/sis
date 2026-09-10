@@ -92,6 +92,16 @@ impl Theme {
         }
     }
 
+    /// Colour for a `systemd-analyze security` verdict.
+    pub fn exposure(&self, text: Option<&str>) -> Style {
+        match text {
+            Some(t) if t.contains("UNSAFE") || t.contains("EXPOSED") => self.error,
+            Some(t) if t.contains("MEDIUM") => self.warn,
+            Some(t) if t.contains("OK") || t.contains("SAFE") => self.ok,
+            _ => self.dim,
+        }
+    }
+
     pub fn priority(&self, prio: u8) -> Style {
         match prio {
             0..=2 => self.error,
