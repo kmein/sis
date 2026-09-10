@@ -61,7 +61,12 @@ pub trait Manager {
     fn disable_unit_files(&self, files: &[&str], runtime: bool) -> zbus::Result<Vec<EnableChange>>;
 
     #[zbus(allow_interactive_auth)]
-    fn mask_unit_files(&self, files: &[&str], runtime: bool, force: bool) -> zbus::Result<Vec<EnableChange>>;
+    fn mask_unit_files(
+        &self,
+        files: &[&str],
+        runtime: bool,
+        force: bool,
+    ) -> zbus::Result<Vec<EnableChange>>;
 
     #[zbus(allow_interactive_auth)]
     fn unmask_unit_files(&self, files: &[&str], runtime: bool) -> zbus::Result<Vec<EnableChange>>;
@@ -103,7 +108,13 @@ pub trait Manager {
     fn job_new(&self, id: u32, job: OwnedObjectPath, unit: String) -> zbus::Result<()>;
 
     #[zbus(signal)]
-    fn job_removed(&self, id: u32, job: OwnedObjectPath, unit: String, result: String) -> zbus::Result<()>;
+    fn job_removed(
+        &self,
+        id: u32,
+        job: OwnedObjectPath,
+        unit: String,
+        result: String,
+    ) -> zbus::Result<()>;
 
     #[zbus(signal)]
     fn reloading(&self, active: bool) -> zbus::Result<()>;
@@ -111,7 +122,10 @@ pub trait Manager {
 
 /// Properties shared by every unit type. Built per call with property caching
 /// disabled; see [`super::Backend::unit`].
-#[proxy(interface = "org.freedesktop.systemd1.Unit", default_service = "org.freedesktop.systemd1")]
+#[proxy(
+    interface = "org.freedesktop.systemd1.Unit",
+    default_service = "org.freedesktop.systemd1"
+)]
 pub trait Unit {
     #[zbus(property)]
     fn id(&self) -> zbus::Result<String>;
@@ -138,7 +152,10 @@ pub trait Unit {
     fn can_reload(&self) -> zbus::Result<bool>;
 }
 
-#[proxy(interface = "org.freedesktop.systemd1.Service", default_service = "org.freedesktop.systemd1")]
+#[proxy(
+    interface = "org.freedesktop.systemd1.Service",
+    default_service = "org.freedesktop.systemd1"
+)]
 pub trait Service {
     #[zbus(property)]
     fn main_pid(&self) -> zbus::Result<u32>;
@@ -165,7 +182,10 @@ pub trait Service {
     fn result(&self) -> zbus::Result<String>;
 }
 
-#[proxy(interface = "org.freedesktop.systemd1.Timer", default_service = "org.freedesktop.systemd1")]
+#[proxy(
+    interface = "org.freedesktop.systemd1.Timer",
+    default_service = "org.freedesktop.systemd1"
+)]
 pub trait Timer {
     #[zbus(property, name = "NextElapseUSecRealtime")]
     fn next_elapse_usec_realtime(&self) -> zbus::Result<u64>;
@@ -177,7 +197,10 @@ pub trait Timer {
     fn unit(&self) -> zbus::Result<String>;
 }
 
-#[proxy(interface = "org.freedesktop.systemd1.Socket", default_service = "org.freedesktop.systemd1")]
+#[proxy(
+    interface = "org.freedesktop.systemd1.Socket",
+    default_service = "org.freedesktop.systemd1"
+)]
 pub trait Socket {
     #[zbus(property)]
     fn listen(&self) -> zbus::Result<Vec<(String, String)>>;

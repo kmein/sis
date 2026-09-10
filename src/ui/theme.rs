@@ -28,13 +28,22 @@ impl Default for Theme {
     fn default() -> Self {
         Self {
             border: Style::default().fg(Color::Cyan),
-            title: Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-            header: Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
-            selected: Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD),
+            title: Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+            header: Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+            selected: Style::default()
+                .bg(Color::Blue)
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
             name: Style::default().fg(Color::Cyan),
             dim: Style::default().fg(Color::DarkGray),
             job: Style::default().fg(Color::Magenta),
-            key: Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
+            key: Style::default()
+                .fg(Color::Blue)
+                .add_modifier(Modifier::BOLD),
             label: Style::default().fg(Color::Gray),
             logo: Style::default().fg(Color::Magenta),
             info_key: Style::default().fg(Color::Yellow),
@@ -42,7 +51,9 @@ impl Default for Theme {
             ok: Style::default().fg(Color::Green),
             warn: Style::default().fg(Color::Yellow),
             error: Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            prompt: Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            prompt: Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         }
     }
 }
@@ -52,9 +63,10 @@ impl Theme {
         match state {
             ActiveState::Active => self.ok,
             ActiveState::Failed => self.error,
-            ActiveState::Activating | ActiveState::Deactivating | ActiveState::Reloading | ActiveState::Refreshing => {
-                self.warn
-            }
+            ActiveState::Activating
+            | ActiveState::Deactivating
+            | ActiveState::Reloading
+            | ActiveState::Refreshing => self.warn,
             ActiveState::Inactive => self.dim,
             ActiveState::Maintenance | ActiveState::Other(_) => self.warn,
         }
@@ -71,7 +83,9 @@ impl Theme {
 
     pub fn file_state(&self, state: Option<&str>) -> Style {
         match state {
-            Some("enabled" | "enabled-runtime" | "alias" | "static" | "indirect" | "generated") => Style::default(),
+            Some("enabled" | "enabled-runtime" | "alias" | "static" | "indirect" | "generated") => {
+                Style::default()
+            }
             Some("disabled") => self.dim,
             Some("masked" | "masked-runtime" | "bad") => self.warn,
             _ => self.dim,
@@ -80,7 +94,7 @@ impl Theme {
 
     pub fn priority(&self, prio: u8) -> Style {
         match prio {
-            0 ..= 2 => self.error,
+            0..=2 => self.error,
             3 => Style::default().fg(Color::Red),
             4 => self.warn,
             5 => Style::default().add_modifier(Modifier::BOLD),

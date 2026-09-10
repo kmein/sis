@@ -1,7 +1,10 @@
+pub mod actions;
+pub mod errors;
 pub mod fetch;
 pub mod proxies;
 pub mod types;
 pub mod unit;
+pub mod watch;
 
 use std::fmt;
 
@@ -46,7 +49,9 @@ pub struct Backend {
 impl Backend {
     pub async fn connect(scope: Scope) -> Result<Self> {
         let conn = match scope {
-            Scope::System => Connection::system().await.context("connecting to the system bus")?,
+            Scope::System => Connection::system()
+                .await
+                .context("connecting to the system bus")?,
             Scope::User => session_connection().await?,
         };
         // The manager never announces changes to NNames & co., so a property
@@ -56,7 +61,11 @@ impl Backend {
             .build()
             .await
             .context("creating the systemd manager proxy")?;
-        Ok(Self { conn, manager, scope })
+        Ok(Self {
+            conn,
+            manager,
+            scope,
+        })
     }
 }
 
@@ -64,7 +73,9 @@ impl Backend {
 /// when `DBUS_SESSION_BUS_ADDRESS` is unset (e.g. from a plain TTY).
 async fn session_connection() -> Result<Connection> {
     if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some() {
-        return Connection::session().await.context("connecting to the session bus");
+        return Connection::session()
+            .await
+            .context("connecting to the session bus");
     }
     let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| {
         // SAFETY: getuid never fails and has no preconditions.

@@ -58,15 +58,24 @@ pub struct Key {
 
 impl Key {
     pub const fn ch(c: char) -> Self {
-        Self { code: KeyCode::Char(c), mods: KeyModifiers::NONE }
+        Self {
+            code: KeyCode::Char(c),
+            mods: KeyModifiers::NONE,
+        }
     }
 
     pub const fn ctrl(c: char) -> Self {
-        Self { code: KeyCode::Char(c), mods: KeyModifiers::CONTROL }
+        Self {
+            code: KeyCode::Char(c),
+            mods: KeyModifiers::CONTROL,
+        }
     }
 
     pub const fn code(code: KeyCode) -> Self {
-        Self { code, mods: KeyModifiers::NONE }
+        Self {
+            code,
+            mods: KeyModifiers::NONE,
+        }
     }
 
     pub fn matches(&self, ev: &KeyEvent) -> bool {
@@ -118,15 +127,27 @@ pub struct Binding {
 
 impl Binding {
     pub const fn new(key: Key, action: Action, label: &'static str) -> Self {
-        Self { key, action, label, confirm: false, hint: true }
+        Self {
+            key,
+            action,
+            label,
+            confirm: false,
+            hint: true,
+        }
     }
 
     pub const fn confirm(self) -> Self {
-        Self { confirm: true, ..self }
+        Self {
+            confirm: true,
+            ..self
+        }
     }
 
     pub const fn quiet(self) -> Self {
-        Self { hint: false, ..self }
+        Self {
+            hint: false,
+            ..self
+        }
     }
 }
 

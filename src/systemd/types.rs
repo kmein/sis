@@ -163,7 +163,10 @@ mod tests {
     #[test]
     fn unit_kind_from_name() {
         assert_eq!(UnitKind::of("nginx.service"), UnitKind::Service);
-        assert_eq!(UnitKind::of("dev-disk-by\\x2duuid-foo.device"), UnitKind::Device);
+        assert_eq!(
+            UnitKind::of("dev-disk-by\\x2duuid-foo.device"),
+            UnitKind::Device
+        );
         assert_eq!(UnitKind::of("weird.thing"), UnitKind::Other("thing".into()));
     }
 

@@ -8,7 +8,10 @@ pub fn timestamp(usec: u64) -> String {
         return String::new();
     }
     match Timestamp::from_microsecond(usec as i64) {
-        Ok(ts) => ts.to_zoned(TimeZone::system()).strftime("%Y-%m-%d %H:%M:%S %Z").to_string(),
+        Ok(ts) => ts
+            .to_zoned(TimeZone::system())
+            .strftime("%Y-%m-%d %H:%M:%S %Z")
+            .to_string(),
         Err(_) => String::new(),
     }
 }
@@ -25,13 +28,30 @@ pub fn age(usec: u64) -> String {
 
 /// Compact duration.
 pub fn duration_secs(secs: u64) -> String {
-    let (d, h, m, s) = (secs / 86_400, secs % 86_400 / 3_600, secs % 3_600 / 60, secs % 60);
+    let (d, h, m, s) = (
+        secs / 86_400,
+        secs % 86_400 / 3_600,
+        secs % 3_600 / 60,
+        secs % 60,
+    );
     if d > 0 {
-        if h > 0 { format!("{d}d{h}h") } else { format!("{d}d") }
+        if h > 0 {
+            format!("{d}d{h}h")
+        } else {
+            format!("{d}d")
+        }
     } else if h > 0 {
-        if m > 0 { format!("{h}h{m}m") } else { format!("{h}h") }
+        if m > 0 {
+            format!("{h}h{m}m")
+        } else {
+            format!("{h}h")
+        }
     } else if m > 0 {
-        if s > 0 && m < 10 { format!("{m}m{s}s") } else { format!("{m}m") }
+        if s > 0 && m < 10 {
+            format!("{m}m{s}s")
+        } else {
+            format!("{m}m")
+        }
     } else {
         format!("{s}s")
     }
@@ -46,7 +66,11 @@ pub fn bytes(n: u64) -> String {
         value /= 1024.0;
         unit += 1;
     }
-    if unit == 0 { format!("{n}B") } else { format!("{value:.1}{}", UNITS[unit]) }
+    if unit == 0 {
+        format!("{n}B")
+    } else {
+        format!("{value:.1}{}", UNITS[unit])
+    }
 }
 
 #[cfg(test)]

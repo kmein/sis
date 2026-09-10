@@ -41,7 +41,18 @@ pub struct Enrichment {
 
 impl Unit {
     pub fn from_listed(u: ListedUnit) -> Self {
-        let ListedUnit(name, description, load, active, sub, following, path, job_id, job_type, _job_path) = u;
+        let ListedUnit(
+            name,
+            description,
+            load,
+            active,
+            sub,
+            following,
+            path,
+            job_id,
+            job_type,
+            _job_path,
+        ) = u;
         Self {
             kind: UnitKind::of(&name),
             load: LoadState::parse(&load),

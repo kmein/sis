@@ -1,6 +1,7 @@
 //! The synchronous heart: state in, effects out. No I/O happens here.
 
 use std::{
+    collections::{HashMap, VecDeque},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -8,24 +9,88 @@ use std::{
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{Frame, layout::Rect};
 use tracing::debug;
+use zbus::zvariant::OwnedObjectPath;
 
 use crate::{
     event::{Effect, Event, Status},
     keys::{self, Action},
     resources::{self, Ctx, Handled, Settings, View},
     store::Store,
-    systemd::{Backend, Scope, fetch::FetchKind},
+    systemd::{Backend, Scope, actions::UnitAction, fetch::FetchKind, watch::SystemdSignal},
     ui::theme::Theme,
 };
 
 const FLASH_FOR: Duration = Duration::from_secs(6);
 const MANAGER_EVERY: Duration = Duration::from_secs(2);
+/// Give up waiting for a job's result after this long.
+const JOB_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Correlates `ActionStarted` job paths with `JobRemoved` signals. The signal
+/// can arrive before the method reply, hence the `recent` ring.
+#[derive(Default)]
+struct JobTracker {
+    pending: HashMap<OwnedObjectPath, (UnitAction, String, Instant)>,
+    recent: VecDeque<(OwnedObjectPath, String)>,
+}
+
+impl JobTracker {
+    fn started(
+        &mut self,
+        job: OwnedObjectPath,
+        action: UnitAction,
+        unit: String,
+        now: Instant,
+    ) -> Option<Status> {
+        if let Some(pos) = self.recent.iter().position(|(j, _)| *j == job) {
+            let (_, result) = self.recent.remove(pos).expect("position exists");
+            return Some(job_status(action, &unit, &result));
+        }
+        self.pending.insert(job, (action, unit, now));
+        None
+    }
+
+    fn removed(&mut self, job: OwnedObjectPath, result: String) -> Option<Status> {
+        match self.pending.remove(&job) {
+            Some((action, unit, _)) => Some(job_status(action, &unit, &result)),
+            None => {
+                self.recent.push_back((job, result));
+                if self.recent.len() > 64 {
+                    self.recent.pop_front();
+                }
+                None
+            }
+        }
+    }
+
+    fn expire(&mut self, now: Instant) -> Vec<Status> {
+        let mut out = Vec::new();
+        self.pending.retain(|_, (action, unit, at)| {
+            let keep = now.duration_since(*at) < JOB_TIMEOUT;
+            if !keep {
+                out.push(Status::info(format!("{action} {unit}: still running")));
+            }
+            keep
+        });
+        out
+    }
+}
+
+fn job_status(action: UnitAction, unit: &str, result: &str) -> Status {
+    match result {
+        "done" => Status::ok(format!("{action} {unit}: done")),
+        "skipped" => Status::info(format!("{action} {unit}: skipped (condition not met)")),
+        other => Status::error(format!("{action} {unit}: {other} (press l for logs)")),
+    }
+}
 
 pub enum Prompt {
     None,
     Command(String),
     Filter(String),
-    Confirm { text: String, effect: Option<Effect> },
+    Confirm {
+        text: String,
+        effect: Option<Effect>,
+    },
 }
 
 pub struct App {
@@ -37,10 +102,13 @@ pub struct App {
     pub help: bool,
     pub should_quit: bool,
     pub connecting: bool,
+    /// The manager is between `Reloading(true)` and `Reloading(false)`.
+    pub reloading: bool,
     views: Vec<Box<dyn View>>,
     status: Option<(Status, Instant)>,
     last_manager: Option<Instant>,
     initial_view: String,
+    jobs: JobTracker,
 }
 
 impl App {
@@ -54,10 +122,12 @@ impl App {
             help: false,
             should_quit: false,
             connecting: false,
+            reloading: false,
             views: Vec::new(),
             status: None,
             last_manager: None,
             initial_view: initial_view.unwrap_or_else(|| "units".to_owned()),
+            jobs: JobTracker::default(),
         }
     }
 
@@ -66,7 +136,10 @@ impl App {
         let view = match resources::lookup(&self.initial_view) {
             Some(view) => view,
             None => {
-                self.flash(Status::error(format!("no such view: {}", self.initial_view)));
+                self.flash(Status::error(format!(
+                    "no such view: {}",
+                    self.initial_view
+                )));
                 resources::lookup("units").expect("the units view exists")
             }
         };
@@ -90,7 +163,10 @@ impl App {
 
     /// The current status message, if it has not expired.
     pub fn flash_message(&self) -> Option<&Status> {
-        self.status.as_ref().filter(|(_, at)| at.elapsed() < FLASH_FOR).map(|(s, _)| s)
+        self.status
+            .as_ref()
+            .filter(|(_, at)| at.elapsed() < FLASH_FOR)
+            .map(|(s, _)| s)
     }
 
     pub fn render_view(&mut self, f: &mut Frame<'_>, area: Rect) {
@@ -122,11 +198,58 @@ impl App {
                 Vec::new()
             }
             Event::BackendReady(backend) => self.on_backend(backend),
+            Event::Signal(signal) => self.on_signal(signal),
+            Event::ActionStarted { action, unit, job } => {
+                if let Some(status) = self.jobs.started(job, action, unit, Instant::now()) {
+                    self.flash(status);
+                }
+                Vec::new()
+            }
+            Event::ActionDone {
+                action,
+                unit,
+                outcome,
+            } => {
+                self.flash(match outcome {
+                    Ok(msg) => Status::ok(msg),
+                    Err(err) => Status::error(format!("{action} {unit}: {err}")),
+                });
+                Vec::new()
+            }
         }
+    }
+
+    fn on_signal(&mut self, signal: SystemdSignal) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        match &signal {
+            SystemdSignal::Reloading(active) => {
+                self.reloading = *active;
+                if !active {
+                    effects.push(Effect::Fetch(FetchKind::Units));
+                    effects.push(Effect::Fetch(FetchKind::UnitFiles));
+                }
+            }
+            SystemdSignal::JobRemoved { job, result, .. } => {
+                if let Some(status) = self.jobs.removed(job.clone(), result.clone()) {
+                    self.flash(status);
+                }
+            }
+            _ => {}
+        }
+        if !self.reloading {
+            let mut ctx = Ctx::new(&self.store, &self.settings, self.scope, &self.theme);
+            for view in &mut self.views {
+                view.on_signal(&signal, &mut ctx);
+            }
+            effects.extend(ctx.finish());
+        }
+        self.apply(effects)
     }
 
     fn on_backend(&mut self, backend: Arc<Backend>) -> Vec<Effect> {
         self.connecting = false;
+        self.reloading = false;
+        self.jobs = JobTracker::default();
         self.scope = backend.scope;
         self.store.clear();
         let mut ctx = Ctx::new(&self.store, &self.settings, self.scope, &self.theme);
@@ -136,18 +259,28 @@ impl App {
         let mut effects = ctx.finish();
         self.views.clear();
         effects.extend(self.start());
-        self.flash(Status::ok(format!("connected to the {} manager", self.scope)));
+        self.flash(Status::ok(format!(
+            "connected to the {} manager",
+            self.scope
+        )));
         effects
     }
 
     fn on_tick(&mut self) -> Vec<Effect> {
         let now = Instant::now();
         let mut effects = Vec::new();
-        if !self.connecting && self.last_manager.is_none_or(|t| now.duration_since(t) >= MANAGER_EVERY) {
+        for status in self.jobs.expire(now) {
+            self.flash(status);
+        }
+        if !self.connecting
+            && self
+                .last_manager
+                .is_none_or(|t| now.duration_since(t) >= MANAGER_EVERY)
+        {
             effects.push(Effect::Fetch(FetchKind::Manager));
             self.last_manager = Some(now);
         }
-        if !self.connecting {
+        if !self.connecting && !self.reloading {
             let mut ctx = Ctx::new(&self.store, &self.settings, self.scope, &self.theme);
             if let Some(view) = self.views.last_mut() {
                 view.on_tick(&mut ctx);
@@ -341,7 +474,8 @@ impl App {
             for effect in queue {
                 match effect {
                     Effect::Push(mut view) => {
-                        let mut ctx = Ctx::new(&self.store, &self.settings, self.scope, &self.theme);
+                        let mut ctx =
+                            Ctx::new(&self.store, &self.settings, self.scope, &self.theme);
                         view.on_enter(&mut ctx);
                         next.extend(ctx.finish());
                         self.views.push(view);
@@ -350,13 +484,24 @@ impl App {
                         if self.views.len() > 1
                             && let Some(mut view) = self.views.pop()
                         {
-                            let mut ctx = Ctx::new(&self.store, &self.settings, self.scope, &self.theme);
+                            let mut ctx =
+                                Ctx::new(&self.store, &self.settings, self.scope, &self.theme);
                             view.on_close(&mut ctx);
                             next.extend(ctx.finish());
                         }
                     }
                     Effect::Status(status) => self.flash(status),
                     Effect::Quit => self.should_quit = true,
+                    Effect::Confirm { text, effect } => {
+                        self.prompt = Prompt::Confirm {
+                            text,
+                            effect: Some(*effect),
+                        };
+                    }
+                    Effect::Perform { action, unit } => {
+                        self.flash(Status::info(format!("{} {unit}…", action.progressive())));
+                        out.push(Effect::Perform { action, unit });
+                    }
                     other => out.push(other),
                 }
             }
@@ -431,6 +576,73 @@ mod tests {
     }
 
     #[test]
+    fn stop_asks_first_and_y_performs() {
+        use crate::{store::ViewData, systemd::unit::Unit};
+        let mut app = App::new(Scope::System, None);
+        app.start();
+        let listed = crate::systemd::types::ListedUnit(
+            "foo.service".into(),
+            "Foo".into(),
+            "loaded".into(),
+            "active".into(),
+            "running".into(),
+            String::new(),
+            OwnedObjectPath::try_from("/org/freedesktop/systemd1/unit/foo_2eservice").unwrap(),
+            0,
+            String::new(),
+            OwnedObjectPath::try_from("/").unwrap(),
+        );
+        app.update(Event::Data(ViewData::Units(vec![Unit::from_listed(
+            listed,
+        )])));
+        assert!(app.update(key('x')).is_empty());
+        assert!(matches!(app.prompt, Prompt::Confirm { .. }));
+        let effects = app.update(key('y'));
+        assert!(matches!(
+            effects[..],
+            [Effect::Perform {
+                action: UnitAction::Stop,
+                ..
+            }]
+        ));
+        assert!(
+            app.flash_message()
+                .is_some_and(|s| s.text.starts_with("stopping foo.service"))
+        );
+        // `s` needs no confirmation.
+        let effects = app.update(key('s'));
+        assert!(matches!(
+            effects[..],
+            [Effect::Perform {
+                action: UnitAction::Start,
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn job_result_is_reported_even_if_signal_beats_reply() {
+        let mut app = App::new(Scope::System, None);
+        app.start();
+        let job = OwnedObjectPath::try_from("/org/freedesktop/systemd1/job/42").unwrap();
+        app.update(Event::Signal(SystemdSignal::JobRemoved {
+            id: 42,
+            job: job.clone(),
+            unit: "foo.service".into(),
+            result: "failed".into(),
+        }));
+        app.update(Event::ActionStarted {
+            action: UnitAction::Restart,
+            unit: "foo.service".into(),
+            job,
+        });
+        assert!(
+            app.flash_message()
+                .is_some_and(|s| s.text.contains("restart foo.service: failed"))
+        );
+    }
+
+    #[test]
     fn unknown_command_flashes_error() {
         let mut app = App::new(Scope::System, None);
         app.start();
@@ -438,7 +650,13 @@ mod tests {
         for c in "nope".chars() {
             app.update(key(c));
         }
-        app.update(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
-        assert!(app.flash_message().is_some_and(|s| s.text.contains("unknown command")));
+        app.update(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
+        assert!(
+            app.flash_message()
+                .is_some_and(|s| s.text.contains("unknown command"))
+        );
     }
 }

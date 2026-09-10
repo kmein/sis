@@ -20,7 +20,9 @@ use crate::{
     event::{Effect, Status},
     keys::{self, Action, Binding},
     store::{DataKind, Store},
-    systemd::{Scope, fetch::FetchKind, types::UnitKind},
+    systemd::{
+        Scope, actions::UnitAction, fetch::FetchKind, types::UnitKind, watch::SystemdSignal,
+    },
     ui::theme::Theme,
 };
 
@@ -36,7 +38,14 @@ pub struct Ctx<'a> {
 
 impl<'a> Ctx<'a> {
     pub fn new(store: &'a Store, settings: &'a Settings, scope: Scope, theme: &'a Theme) -> Self {
-        Self { store, settings, scope, now: Instant::now(), theme, effects: Vec::new() }
+        Self {
+            store,
+            settings,
+            scope,
+            now: Instant::now(),
+            theme,
+            effects: Vec::new(),
+        }
     }
 
     pub fn effect(&mut self, effect: Effect) {
@@ -57,6 +66,22 @@ impl<'a> Ctx<'a> {
 
     pub fn status(&mut self, status: Status) {
         self.effect(Effect::Status(status));
+    }
+
+    /// Run a unit action, asking first if `confirm` is set.
+    pub fn perform(&mut self, action: UnitAction, unit: &str, confirm: bool) {
+        let effect = Effect::Perform {
+            action,
+            unit: unit.to_owned(),
+        };
+        if confirm {
+            self.effect(Effect::Confirm {
+                text: format!("{action} {unit}?"),
+                effect: Box::new(effect),
+            });
+        } else {
+            self.effect(effect);
+        }
     }
 
     pub fn finish(self) -> Vec<Effect> {
@@ -98,11 +123,18 @@ pub struct Column {
 
 impl Column {
     pub const fn new(title: &'static str, width: Constraint) -> Self {
-        Self { title, width, right: false }
+        Self {
+            title,
+            width,
+            right: false,
+        }
     }
 
     pub const fn right(self) -> Self {
-        Self { right: true, ..self }
+        Self {
+            right: true,
+            ..self
+        }
     }
 }
 
@@ -125,6 +157,11 @@ impl SortKey {
         }
     }
 }
+
+/// Do not refetch more often than this on signal bursts.
+const SIGNAL_THROTTLE: Duration = Duration::from_millis(250);
+/// Do not ask for viewport enrichment more often than this.
+const ENRICH_EVERY: Duration = Duration::from_secs(1);
 
 pub enum Handled {
     Yes,
@@ -171,6 +208,14 @@ pub trait Resource: 'static {
     fn bindings() -> &'static [Binding];
 
     fn on_action(row: &Self::Row, action: Action, ctx: &mut Ctx<'_>);
+
+    /// Called with the rows currently on screen; request lazy data for them.
+    fn enrich(_rows: &[&Self::Row], _ctx: &mut Ctx<'_>) {}
+
+    /// Should this signal trigger a refetch of our data?
+    fn interested(_signal: &SystemdSignal) -> bool {
+        false
+    }
 }
 
 /// Something on the view stack.
@@ -186,6 +231,8 @@ pub trait View: Send {
     fn on_data(&mut self, kind: DataKind, ctx: &mut Ctx<'_>);
 
     fn on_tick(&mut self, ctx: &mut Ctx<'_>);
+
+    fn on_signal(&mut self, _signal: &SystemdSignal, _ctx: &mut Ctx<'_>) {}
 
     fn on_key(&mut self, key: &KeyEvent, ctx: &mut Ctx<'_>) -> Handled;
 
@@ -212,6 +259,9 @@ pub struct TableView<R: Resource> {
     filter: String,
     sort: (usize, bool),
     last_fetch: Vec<Option<Instant>>,
+    /// A signal asked for a refetch while one was too recent.
+    refetch_pending: bool,
+    last_enrich: Option<Instant>,
     last_height: usize,
     _marker: std::marker::PhantomData<fn() -> R>,
 }
@@ -227,6 +277,8 @@ impl<R: Resource> Default for TableView<R> {
             filter: String::new(),
             sort: (R::default_sort(), false),
             last_fetch: vec![None; R::fetches().len()],
+            refetch_pending: false,
+            last_enrich: None,
             last_height: 1,
             _marker: std::marker::PhantomData,
         }
@@ -253,7 +305,7 @@ impl<R: Resource> TableView<R> {
 
     fn recompute(&mut self) {
         let needle = self.filter.to_lowercase();
-        self.visible = (0 .. self.rows.len())
+        self.visible = (0..self.rows.len())
             .filter(|&i| needle.is_empty() || R::matches(&self.rows[i], &needle))
             .collect();
         let (col, desc) = self.sort;
@@ -265,7 +317,10 @@ impl<R: Resource> TableView<R> {
         });
         // Keep the cursor on the same row if it is still there.
         if let Some(key) = &self.selected_key
-            && let Some(pos) = self.visible.iter().position(|&i| R::key(&self.rows[i]) == key)
+            && let Some(pos) = self
+                .visible
+                .iter()
+                .position(|&i| R::key(&self.rows[i]) == key)
         {
             self.selected = pos;
         }
@@ -293,8 +348,22 @@ impl<R: Resource> TableView<R> {
         self.clamp();
     }
 
+    fn enrich_viewport(&mut self, ctx: &mut Ctx<'_>) {
+        self.last_enrich = Some(ctx.now);
+        let end = (self.offset + self.last_height).min(self.visible.len());
+        let rows: Vec<&R::Row> = self.visible[self.offset.min(end)..end]
+            .iter()
+            .map(|&i| &self.rows[i])
+            .collect();
+        R::enrich(&rows, ctx);
+    }
+
     fn set_sort(&mut self, col: usize) {
-        self.sort = if self.sort.0 == col { (col, !self.sort.1) } else { (col, false) };
+        self.sort = if self.sort.0 == col {
+            (col, !self.sort.1)
+        } else {
+            (col, false)
+        };
         self.recompute();
     }
 
@@ -327,16 +396,43 @@ impl<R: Resource> View for TableView<R> {
     fn on_data(&mut self, kind: DataKind, ctx: &mut Ctx<'_>) {
         if R::affected_by(kind) {
             self.rebuild(ctx);
+            self.enrich_viewport(ctx);
         }
     }
 
     fn on_tick(&mut self, ctx: &mut Ctx<'_>) {
         for (i, (kind, every)) in R::fetches().iter().enumerate() {
             let due = self.last_fetch[i].is_none_or(|t| ctx.now.duration_since(t) >= *every);
-            if due {
+            if due || (i == 0 && self.refetch_pending) {
                 ctx.fetch(*kind);
                 self.last_fetch[i] = Some(ctx.now);
+                if i == 0 {
+                    self.refetch_pending = false;
+                }
             }
+        }
+        if self
+            .last_enrich
+            .is_none_or(|t| ctx.now.duration_since(t) >= ENRICH_EVERY)
+        {
+            self.enrich_viewport(ctx);
+        }
+    }
+
+    fn on_signal(&mut self, signal: &SystemdSignal, ctx: &mut Ctx<'_>) {
+        if !R::interested(signal) {
+            return;
+        }
+        let Some((kind, _)) = R::fetches().first() else {
+            return;
+        };
+        let recent =
+            self.last_fetch[0].is_some_and(|t| ctx.now.duration_since(t) < SIGNAL_THROTTLE);
+        if recent {
+            self.refetch_pending = true;
+        } else {
+            ctx.fetch(*kind);
+            self.last_fetch[0] = Some(ctx.now);
         }
     }
 
@@ -391,7 +487,10 @@ impl<R: Resource> View for TableView<R> {
         } else {
             format!(" {}(/{})[{}] ", R::NAME, self.filter, self.visible.len())
         };
-        let block = Block::default().borders(Borders::ALL).border_style(theme.border).title(title);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme.border)
+            .title(title);
         let inner = block.inner(area);
         // One line for the column headers.
         self.last_height = inner.height.saturating_sub(1).max(1) as usize;
@@ -402,7 +501,9 @@ impl<R: Resource> View for TableView<R> {
             Cell::from(format!("{}{}", c.title, self.sort_marker(i))).style(theme.header)
         }));
         let end = (self.offset + self.last_height).min(self.visible.len());
-        let rows = self.visible[self.offset .. end].iter().map(|&i| Row::new(R::cells(&self.rows[i], theme)));
+        let rows = self.visible[self.offset..end]
+            .iter()
+            .map(|&i| Row::new(R::cells(&self.rows[i], theme)));
         let widths: Vec<Constraint> = columns.iter().map(|c| c.width).collect();
         let table = Table::new(rows, widths)
             .header(header)
@@ -430,7 +531,10 @@ const REGISTRY: &[Entry] = &[Entry {
 
 /// Open the view registered under `name` or one of its aliases.
 pub fn lookup(name: &str) -> Option<Box<dyn View>> {
-    REGISTRY.iter().find(|e| e.name == name || e.aliases.contains(&name)).map(|e| (e.open)())
+    REGISTRY
+        .iter()
+        .find(|e| e.name == name || e.aliases.contains(&name))
+        .map(|e| (e.open)())
 }
 
 /// Canonical view names, for help and completion.
@@ -440,5 +544,9 @@ pub fn names() -> Vec<&'static str> {
 
 /// Names starting with `prefix`, for tab completion.
 pub fn complete(prefix: &str) -> Vec<&'static str> {
-    REGISTRY.iter().map(|e| e.name).filter(|n| n.starts_with(prefix)).collect()
+    REGISTRY
+        .iter()
+        .map(|e| e.name)
+        .filter(|n| n.starts_with(prefix))
+        .collect()
 }

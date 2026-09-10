@@ -15,15 +15,20 @@ use crate::{
 pub fn draw(f: &mut Frame<'_>, area: Rect, app: &App) {
     let theme = &app.theme;
     let line = match &app.prompt {
-        Prompt::Command(text) => {
-            Line::from(vec![Span::styled("🐚> ", theme.prompt), Span::raw(text.clone()), Span::styled("█", theme.prompt)])
-        }
-        Prompt::Filter(text) => {
-            Line::from(vec![Span::styled("🔍> ", theme.prompt), Span::raw(text.clone()), Span::styled("█", theme.prompt)])
-        }
-        Prompt::Confirm { text, .. } => {
-            Line::from(vec![Span::styled(format!("{text} [y/N] "), theme.warn), Span::styled("█", theme.prompt)])
-        }
+        Prompt::Command(text) => Line::from(vec![
+            Span::styled("🐚> ", theme.prompt),
+            Span::raw(text.clone()),
+            Span::styled("█", theme.prompt),
+        ]),
+        Prompt::Filter(text) => Line::from(vec![
+            Span::styled("🔍> ", theme.prompt),
+            Span::raw(text.clone()),
+            Span::styled("█", theme.prompt),
+        ]),
+        Prompt::Confirm { text, .. } => Line::from(vec![
+            Span::styled(format!("{text} [y/N] "), theme.warn),
+            Span::styled("█", theme.prompt),
+        ]),
         Prompt::None => match app.flash_message() {
             Some(status) => {
                 let style = match status.level {

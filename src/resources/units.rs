@@ -6,12 +6,15 @@ use ratatui::{layout::Constraint, widgets::Cell};
 
 use super::{Column, Ctx, Resource, Settings, SortKey};
 use crate::{
-    event::Status,
+    event::{Effect, Status},
     keys::{Action, Binding, Key},
     store::{DataKind, Store},
-    systemd::{fetch::FetchKind, unit::Unit},
+    systemd::{actions::UnitAction, fetch::FetchKind, unit::Unit, watch::SystemdSignal},
     ui::{format, theme::Theme},
 };
+
+/// Re-read a unit's properties after this long on screen.
+const ENRICH_STALE: Duration = Duration::from_secs(10);
 
 pub struct UnitsResource;
 
@@ -30,7 +33,11 @@ const COLUMNS: &[Column] = &[
 ];
 
 const BINDINGS: &[Binding] = &[
-    Binding::new(Key::code(crossterm::event::KeyCode::Enter), Action::Select, "Describe"),
+    Binding::new(
+        Key::code(crossterm::event::KeyCode::Enter),
+        Action::Select,
+        "Describe",
+    ),
     Binding::new(Key::ch('l'), Action::Logs, "Logs"),
     Binding::new(Key::ch('s'), Action::Start, "Start"),
     Binding::new(Key::ch('x'), Action::Stop, "Stop").confirm(),
@@ -57,13 +64,18 @@ impl Resource for UnitsResource {
     }
 
     fn fetches() -> &'static [(FetchKind, Duration)] {
-        const FETCHES: &[(FetchKind, Duration)] =
-            &[(FetchKind::Units, Duration::from_secs(5)), (FetchKind::UnitFiles, Duration::from_secs(30))];
+        const FETCHES: &[(FetchKind, Duration)] = &[
+            (FetchKind::Units, Duration::from_secs(5)),
+            (FetchKind::UnitFiles, Duration::from_secs(30)),
+        ];
         FETCHES
     }
 
     fn affected_by(kind: DataKind) -> bool {
-        matches!(kind, DataKind::Units | DataKind::UnitFiles | DataKind::Enrichment)
+        matches!(
+            kind,
+            DataKind::Units | DataKind::UnitFiles | DataKind::Enrichment
+        )
     }
 
     fn rows(store: &Store, settings: &Settings) -> Vec<Unit> {
@@ -88,18 +100,37 @@ impl Resource for UnitsResource {
     fn cells(u: &Unit, theme: &Theme) -> Vec<Cell<'static>> {
         let active = theme.active(&u.active);
         let enrich = u.enrich.as_ref();
-        let since = enrich.map(|e| if u.is_failed() { e.state_change } else { e.active_enter });
+        let since = enrich.map(|e| {
+            if u.is_failed() {
+                e.state_change
+            } else {
+                e.active_enter
+            }
+        });
         vec![
             Cell::from(u.name.clone()).style(theme.name),
             Cell::from(u.kind.as_str().to_owned()),
             Cell::from(u.load.as_str().to_owned()).style(theme.load(&u.load)),
             Cell::from(u.active.as_str().to_owned()).style(active),
             Cell::from(u.sub.clone()).style(active),
-            Cell::from(u.file_state.clone().unwrap_or_default()).style(theme.file_state(u.file_state.as_deref())),
-            Cell::from(u.job.as_ref().map(|(_, ty)| ty.clone()).unwrap_or_default()).style(theme.job),
+            Cell::from(u.file_state.clone().unwrap_or_default())
+                .style(theme.file_state(u.file_state.as_deref())),
+            Cell::from(u.job.as_ref().map(|(_, ty)| ty.clone()).unwrap_or_default())
+                .style(theme.job),
             Cell::from(format::age(since.unwrap_or(0))).style(theme.dim),
-            Cell::from(enrich.and_then(|e| e.main_pid).filter(|&p| p != 0).map(|p| p.to_string()).unwrap_or_default()),
-            Cell::from(enrich.and_then(|e| e.memory_current).map(format::bytes).unwrap_or_default()),
+            Cell::from(
+                enrich
+                    .and_then(|e| e.main_pid)
+                    .filter(|&p| p != 0)
+                    .map(|p| p.to_string())
+                    .unwrap_or_default(),
+            ),
+            Cell::from(
+                enrich
+                    .and_then(|e| e.memory_current)
+                    .map(format::bytes)
+                    .unwrap_or_default(),
+            ),
             Cell::from(u.description.clone()).style(theme.dim),
         ]
     }
@@ -112,10 +143,24 @@ impl Resource for UnitsResource {
             3 => SortKey::Str(u.active.as_str().to_owned()),
             4 => SortKey::Str(u.sub.clone()),
             5 => u.file_state.clone().map_or(SortKey::None, SortKey::Str),
-            6 => u.job.as_ref().map_or(SortKey::None, |(_, t)| SortKey::Str(t.clone())),
-            7 => u.enrich.as_ref().map_or(SortKey::None, |e| SortKey::Num(e.active_enter as i128)),
-            8 => u.enrich.as_ref().and_then(|e| e.main_pid).map_or(SortKey::None, |p| SortKey::Num(p as i128)),
-            9 => u.enrich.as_ref().and_then(|e| e.memory_current).map_or(SortKey::None, |m| SortKey::Num(m as i128)),
+            6 => u
+                .job
+                .as_ref()
+                .map_or(SortKey::None, |(_, t)| SortKey::Str(t.clone())),
+            7 => u
+                .enrich
+                .as_ref()
+                .map_or(SortKey::None, |e| SortKey::Num(e.active_enter as i128)),
+            8 => u
+                .enrich
+                .as_ref()
+                .and_then(|e| e.main_pid)
+                .map_or(SortKey::None, |p| SortKey::Num(p as i128)),
+            9 => u
+                .enrich
+                .as_ref()
+                .and_then(|e| e.memory_current)
+                .map_or(SortKey::None, |m| SortKey::Num(m as i128)),
             _ => SortKey::Str(u.description.clone()),
         }
     }
@@ -144,6 +189,47 @@ impl Resource for UnitsResource {
     }
 
     fn on_action(row: &Unit, action: Action, ctx: &mut Ctx<'_>) {
-        ctx.status(Status::info(format!("{action:?} {} is not implemented yet", row.name)));
+        let confirm = BINDINGS.iter().any(|b| b.action == action && b.confirm);
+        let unit_action = match action {
+            Action::Start => UnitAction::Start,
+            Action::Stop => UnitAction::Stop,
+            Action::Restart => UnitAction::Restart,
+            Action::Reload => UnitAction::Reload,
+            Action::Enable => UnitAction::Enable,
+            Action::Disable => UnitAction::Disable,
+            Action::Mask => UnitAction::Mask,
+            Action::Unmask => UnitAction::Unmask,
+            Action::ResetFailed => UnitAction::ResetFailed,
+            Action::Kill => UnitAction::Kill,
+            Action::DaemonReload => UnitAction::DaemonReload,
+            other => {
+                ctx.status(Status::info(format!(
+                    "{other:?} {} is not implemented yet",
+                    row.name
+                )));
+                return;
+            }
+        };
+        ctx.perform(unit_action, &row.name, confirm);
+    }
+
+    fn enrich(rows: &[&Unit], ctx: &mut Ctx<'_>) {
+        let now = ctx.now;
+        let targets: Vec<_> = rows
+            .iter()
+            .filter(|u| {
+                u.enrich
+                    .as_ref()
+                    .is_none_or(|e| now.duration_since(e.fetched_at) >= ENRICH_STALE)
+            })
+            .map(|u| (u.name.clone(), u.path.clone()))
+            .collect();
+        if !targets.is_empty() {
+            ctx.effect(Effect::Enrich(targets));
+        }
+    }
+
+    fn interested(signal: &SystemdSignal) -> bool {
+        !matches!(signal, SystemdSignal::Reloading(_))
     }
 }

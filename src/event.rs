@@ -7,10 +7,12 @@ use futures_util::StreamExt;
 use tokio::sync::mpsc::Sender;
 use tracing::warn;
 
+use zbus::zvariant::OwnedObjectPath;
+
 use crate::{
     resources::View,
     store::ViewData,
-    systemd::{Backend, Scope, fetch::FetchKind},
+    systemd::{Backend, Scope, actions::UnitAction, fetch::FetchKind, watch::SystemdSignal},
 };
 
 /// Everything the application reacts to.
@@ -24,6 +26,19 @@ pub enum Event {
     Error(String),
     /// The backend for a new scope is connected.
     BackendReady(Arc<Backend>),
+    Signal(SystemdSignal),
+    /// An action was accepted and produced a job to wait for.
+    ActionStarted {
+        action: UnitAction,
+        unit: String,
+        job: OwnedObjectPath,
+    },
+    /// An action finished without a job, or failed.
+    ActionDone {
+        action: UnitAction,
+        unit: String,
+        outcome: Result<String, String>,
+    },
 }
 
 /// Everything the application asks the outside world to do. The UI-only
@@ -31,11 +46,22 @@ pub enum Event {
 /// [`crate::app::App`] itself; the rest reach [`crate::runtime`].
 pub enum Effect {
     Fetch(FetchKind),
+    /// Fetch per-unit properties for these units (name, object path).
+    Enrich(Vec<(String, OwnedObjectPath)>),
+    Perform {
+        action: UnitAction,
+        unit: String,
+    },
     SwitchScope(Scope),
     Quit,
     Push(Box<dyn View>),
     Pop,
     Status(Status),
+    /// Ask before running the wrapped effect.
+    Confirm {
+        text: String,
+        effect: Box<Effect>,
+    },
 }
 
 /// A message for the status line.
@@ -54,15 +80,24 @@ pub enum Level {
 
 impl Status {
     pub fn info(text: impl Into<String>) -> Self {
-        Self { text: text.into(), level: Level::Info }
+        Self {
+            text: text.into(),
+            level: Level::Info,
+        }
     }
 
     pub fn ok(text: impl Into<String>) -> Self {
-        Self { text: text.into(), level: Level::Ok }
+        Self {
+            text: text.into(),
+            level: Level::Ok,
+        }
     }
 
     pub fn error(text: impl Into<String>) -> Self {
-        Self { text: text.into(), level: Level::Error }
+        Self {
+            text: text.into(),
+            level: Level::Error,
+        }
     }
 }
 
