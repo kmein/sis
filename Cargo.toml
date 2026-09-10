@@ -1,0 +1,42 @@
+[package]
+name = "sis"
+version = "0.1.0"
+authors = ["Kierán Meinhardt <kmein@posteo.de>"]
+edition = "2024"
+description = "k9s for systemd: a terminal UI for units, timers, sockets, journal and friends"
+readme = "README.md"
+repository = "https://github.com/kmein/sis"
+license = "MPL-2.0"
+keywords = ["cli", "tui", "systemd", "journal"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+color-eyre = "0.6"
+eyre = "0.6"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+jiff = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "fs"] }
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+unicode-width = "0.2"
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+
+[dependencies.clap]
+version = "4"
+features = ["derive", "unicode", "wrap_help"]
+
+[dependencies.crossterm]
+version = "0.29"
+features = ["event-stream"]
+
+[dependencies.ratatui]
+version = "0.30"
+
+[profile.release]
+lto = true
+panic = "abort"
+codegen-units = 1
