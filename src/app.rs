@@ -383,13 +383,15 @@ impl App {
         self.jobs = JobTracker::default();
         self.scope = backend.scope;
         self.store.clear();
-        let mut ctx = Ctx::new(&self.store, &self.settings, self.scope, &self.theme);
-        for view in &mut self.views {
-            view.on_close(&mut ctx);
-        }
-        let mut effects = ctx.finish();
-        self.views.clear();
-        effects.extend(self.start());
+        // Stay where we were: same root view, same filter, on the other manager.
+        let filter = self
+            .views
+            .first()
+            .map(|v| v.filter().to_owned())
+            .unwrap_or_default();
+        let mut effects = self.open_root(self.root, &filter);
+        effects.push(Effect::Fetch(FetchKind::Manager));
+        self.last_manager = Some(Instant::now());
         self.flash(Status::ok(format!(
             "connected to the {} manager",
             self.scope
@@ -917,6 +919,26 @@ mod tests {
             "{:?}",
             app.prompt
         );
+    }
+
+    #[test]
+    fn scope_switch_keeps_the_current_view() {
+        let mut app = App::new(Scope::System, None);
+        app.start();
+        app.update(key(':'));
+        for c in "timers".chars() {
+            app.update(key(c));
+        }
+        app.update(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
+        assert_eq!(app.root(), "timers");
+        let effects = app.update(key('u'));
+        assert!(matches!(effects[..], [Effect::SwitchScope(Scope::User)]));
+        // The runtime would answer with a user backend; we cannot build one
+        // without a bus, but the root must survive the switch preparation.
+        assert_eq!(app.root(), "timers");
     }
 
     #[test]
