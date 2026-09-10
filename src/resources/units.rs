@@ -4,7 +4,10 @@ use std::time::Duration;
 
 use ratatui::{layout::Constraint, widgets::Cell};
 
-use super::{Column, Ctx, Resource, Settings, SortKey};
+use super::{
+    Column, Ctx, Resource, Settings, SortKey,
+    unit_detail::{Tab, UnitDetailView},
+};
 use crate::{
     event::{Effect, Status},
     keys::{Action, Binding, Key},
@@ -12,6 +15,31 @@ use crate::{
     systemd::{actions::UnitAction, fetch::FetchKind, unit::Unit, watch::SystemdSignal},
     ui::{format, theme::Theme},
 };
+
+/// Map a key action onto a unit action and run it; shared by every view
+/// that acts on a unit.
+pub fn perform(unit: &str, action: Action, confirm: bool, ctx: &mut Ctx<'_>) {
+    let unit_action = match action {
+        Action::Start => UnitAction::Start,
+        Action::Stop => UnitAction::Stop,
+        Action::Restart => UnitAction::Restart,
+        Action::Reload => UnitAction::Reload,
+        Action::Enable => UnitAction::Enable,
+        Action::Disable => UnitAction::Disable,
+        Action::Mask => UnitAction::Mask,
+        Action::Unmask => UnitAction::Unmask,
+        Action::ResetFailed => UnitAction::ResetFailed,
+        Action::Kill => UnitAction::Kill,
+        Action::DaemonReload => UnitAction::DaemonReload,
+        other => {
+            ctx.status(Status::info(format!(
+                "{other:?} {unit} is not implemented yet"
+            )));
+            return;
+        }
+    };
+    ctx.perform(unit_action, unit, confirm);
+}
 
 /// Re-read a unit's properties after this long on screen.
 const ENRICH_STALE: Duration = Duration::from_secs(10);
@@ -190,27 +218,11 @@ impl Resource for UnitsResource {
 
     fn on_action(row: &Unit, action: Action, ctx: &mut Ctx<'_>) {
         let confirm = BINDINGS.iter().any(|b| b.action == action && b.confirm);
-        let unit_action = match action {
-            Action::Start => UnitAction::Start,
-            Action::Stop => UnitAction::Stop,
-            Action::Restart => UnitAction::Restart,
-            Action::Reload => UnitAction::Reload,
-            Action::Enable => UnitAction::Enable,
-            Action::Disable => UnitAction::Disable,
-            Action::Mask => UnitAction::Mask,
-            Action::Unmask => UnitAction::Unmask,
-            Action::ResetFailed => UnitAction::ResetFailed,
-            Action::Kill => UnitAction::Kill,
-            Action::DaemonReload => UnitAction::DaemonReload,
-            other => {
-                ctx.status(Status::info(format!(
-                    "{other:?} {} is not implemented yet",
-                    row.name
-                )));
-                return;
-            }
-        };
-        ctx.perform(unit_action, &row.name, confirm);
+        match action {
+            Action::Select => ctx.push(UnitDetailView::boxed(&row.name, &row.path, Tab::Status)),
+            Action::Cat => ctx.push(UnitDetailView::boxed(&row.name, &row.path, Tab::File)),
+            other => perform(&row.name, other, confirm, ctx),
+        }
     }
 
     fn enrich(rows: &[&Unit], ctx: &mut Ctx<'_>) {

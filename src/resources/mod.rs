@@ -1,6 +1,8 @@
 //! The view abstraction: a [`Resource`] describes a table of rows, a [`View`]
 //! is something on the view stack that handles keys and draws itself.
 
+pub mod text;
+pub mod unit_detail;
 pub mod units;
 
 use std::{
@@ -387,7 +389,7 @@ impl<R: Resource> View for TableView<R> {
 
     fn on_enter(&mut self, ctx: &mut Ctx<'_>) {
         for (i, (kind, _)) in R::fetches().iter().enumerate() {
-            ctx.fetch(*kind);
+            ctx.fetch(kind.clone());
             self.last_fetch[i] = Some(ctx.now);
         }
         self.rebuild(ctx);
@@ -404,7 +406,7 @@ impl<R: Resource> View for TableView<R> {
         for (i, (kind, every)) in R::fetches().iter().enumerate() {
             let due = self.last_fetch[i].is_none_or(|t| ctx.now.duration_since(t) >= *every);
             if due || (i == 0 && self.refetch_pending) {
-                ctx.fetch(*kind);
+                ctx.fetch(kind.clone());
                 self.last_fetch[i] = Some(ctx.now);
                 if i == 0 {
                     self.refetch_pending = false;
@@ -431,7 +433,7 @@ impl<R: Resource> View for TableView<R> {
         if recent {
             self.refetch_pending = true;
         } else {
-            ctx.fetch(*kind);
+            ctx.fetch(kind.clone());
             self.last_fetch[0] = Some(ctx.now);
         }
     }
@@ -458,7 +460,7 @@ impl<R: Resource> View for TableView<R> {
             Action::Bottom => self.move_by(isize::MAX / 2),
             Action::Refresh => {
                 for (i, (kind, _)) in R::fetches().iter().enumerate() {
-                    ctx.fetch(*kind);
+                    ctx.fetch(kind.clone());
                     self.last_fetch[i] = Some(ctx.now);
                 }
             }

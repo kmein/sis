@@ -554,7 +554,7 @@ mod tests {
         let kinds: Vec<_> = effects
             .iter()
             .filter_map(|e| match e {
-                Effect::Fetch(k) => Some(*k),
+                Effect::Fetch(k) => Some(k.clone()),
                 _ => None,
             })
             .collect();

@@ -33,6 +33,12 @@ pub enum Action {
     KindAll,
     /// Synthetic: settings changed, rebuild rows.
     SettingsChanged,
+    TabNext,
+    Tab1,
+    Tab2,
+    Tab3,
+    Tab4,
+    ToggleWrap,
     // Row actions
     Select,
     Logs,

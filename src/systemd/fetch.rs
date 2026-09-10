@@ -18,19 +18,20 @@ use super::{
     types::UnitKind,
     unit::{Enrichment, Unit},
 };
-use crate::store::{ManagerInfo, ViewData};
+use crate::store::{ManagerInfo, UnitDetail, ViewData};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FetchKind {
     Units,
     UnitFiles,
     Manager,
+    Detail { name: String, path: OwnedObjectPath },
 }
 
 impl FetchKind {
     pub async fn run(self, backend: Arc<Backend>) -> Result<ViewData> {
         let started = std::time::Instant::now();
-        let data = match self {
+        let data = match &self {
             Self::Units => {
                 let units = backend.manager.list_units().await.context("ListUnits")?;
                 let mut units: Vec<Unit> = units.into_iter().map(Unit::from_listed).collect();
@@ -61,6 +62,9 @@ impl FetchKind {
                     n_failed: m.n_failed_units().await.context("NFailedUnits")?,
                     n_jobs: m.n_jobs().await.context("NJobs")?,
                 })
+            }
+            Self::Detail { name, path } => {
+                ViewData::UnitDetail(Box::new(detail(&backend, name, path).await?))
             }
         };
         debug!(kind = ?self, elapsed = ?started.elapsed(), "fetched");
@@ -162,4 +166,67 @@ pub async fn enrich(
     }
     debug!(n = out.len(), elapsed = ?started.elapsed(), "enriched");
     Ok(ViewData::Enrichment(out))
+}
+
+/// The D-Bus interface holding a unit type's own properties.
+pub fn typed_interface(kind: &UnitKind) -> Option<String> {
+    let name = match kind {
+        UnitKind::Other(_) => return None,
+        k => k.as_str(),
+    };
+    let mut chars = name.chars();
+    let first = chars.next()?.to_ascii_uppercase();
+    Some(format!(
+        "org.freedesktop.systemd1.{first}{}",
+        chars.as_str()
+    ))
+}
+
+/// Everything for the detail view. If the object is gone (the unit was
+/// garbage-collected), load it again and retry once.
+async fn detail(backend: &Backend, name: &str, path: &OwnedObjectPath) -> Result<UnitDetail> {
+    let unit = match properties(backend, path, "org.freedesktop.systemd1.Unit").await {
+        Ok(p) => p,
+        Err(_) => {
+            let fresh = backend.manager.load_unit(name).await.context("LoadUnit")?;
+            return Box::pin(detail(backend, name, &fresh)).await;
+        }
+    };
+    let kind = UnitKind::of(name);
+    let typed = match typed_interface(&kind) {
+        Some(iface) => properties(backend, path, &iface).await.unwrap_or_default(),
+        None => HashMap::new(),
+    };
+    let processes = backend
+        .manager
+        .get_unit_processes(name)
+        .await
+        .unwrap_or_default();
+
+    let mut paths = Vec::new();
+    if let Some(fragment) = prop_str(&unit, "FragmentPath").filter(|p| !p.is_empty()) {
+        paths.push(fragment);
+    }
+    if let Some(v) = unit.get("DropInPaths")
+        && let Ok(drop_ins) = Vec::<String>::try_from(v.clone())
+    {
+        paths.extend(drop_ins);
+    }
+    let mut files = Vec::with_capacity(paths.len());
+    for p in paths {
+        let contents = tokio::fs::read_to_string(&p)
+            .await
+            .map_err(|e| e.to_string());
+        files.push((p, contents));
+    }
+
+    Ok(UnitDetail {
+        name: name.to_owned(),
+        path: path.clone(),
+        unit,
+        typed,
+        processes,
+        files,
+        fetched_at: Instant::now(),
+    })
 }

@@ -1,8 +1,13 @@
 //! Cached data shared by all views, filled by fetches.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Instant};
 
-use crate::systemd::unit::{Enrichment, Unit};
+use zbus::zvariant::{OwnedObjectPath, OwnedValue};
+
+use crate::systemd::{
+    types::Process,
+    unit::{Enrichment, Unit},
+};
 
 /// One dataset delivered by a fetch; each variant fills one slot of [`Store`].
 #[derive(Debug)]
@@ -12,6 +17,22 @@ pub enum ViewData {
     UnitFiles(HashMap<String, String>),
     Manager(ManagerInfo),
     Enrichment(Vec<(String, Enrichment)>),
+    UnitDetail(Box<UnitDetail>),
+}
+
+/// Everything the detail view shows for one unit.
+#[derive(Debug, Clone)]
+pub struct UnitDetail {
+    pub name: String,
+    pub path: OwnedObjectPath,
+    /// `org.freedesktop.systemd1.Unit` properties.
+    pub unit: HashMap<String, OwnedValue>,
+    /// Properties of the type-specific interface (Service, Timer, ...).
+    pub typed: HashMap<String, OwnedValue>,
+    pub processes: Vec<Process>,
+    /// Unit file and drop-ins: path and contents (or the read error).
+    pub files: Vec<(String, Result<String, String>)>,
+    pub fetched_at: Instant,
 }
 
 /// Which slot a [`ViewData`] fills; what views get told about.
@@ -21,6 +42,7 @@ pub enum DataKind {
     UnitFiles,
     Manager,
     Enrichment,
+    UnitDetail,
 }
 
 impl ViewData {
@@ -30,6 +52,7 @@ impl ViewData {
             Self::UnitFiles(_) => DataKind::UnitFiles,
             Self::Manager(_) => DataKind::Manager,
             Self::Enrichment(_) => DataKind::Enrichment,
+            Self::UnitDetail(_) => DataKind::UnitDetail,
         }
     }
 }
@@ -50,6 +73,8 @@ pub struct Store {
     pub unit_files: HashMap<String, String>,
     pub manager: ManagerInfo,
     pub enrichment: HashMap<String, Enrichment>,
+    /// Latest detail per unit name.
+    pub detail: HashMap<String, UnitDetail>,
 }
 
 impl Store {
@@ -60,6 +85,9 @@ impl Store {
             ViewData::UnitFiles(files) => self.unit_files = files,
             ViewData::Manager(info) => self.manager = info,
             ViewData::Enrichment(items) => self.enrichment.extend(items),
+            ViewData::UnitDetail(detail) => {
+                self.detail.insert(detail.name.clone(), *detail);
+            }
         }
     }
 
