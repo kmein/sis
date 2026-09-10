@@ -117,6 +117,7 @@ pub enum FetchKind {
     Bus,
     Userdb,
     Groups,
+    Plot,
 }
 
 impl FetchKind {
@@ -303,6 +304,17 @@ impl FetchKind {
                     "userdbctl",
                     &args(&["group", "--json=short", "--no-pager"]),
                     JsonShape::Lines,
+                )
+                .await?,
+            ),
+            Self::Plot => ViewData::Plot(
+                run_json(
+                    "systemd-analyze",
+                    &scoped(
+                        backend.scope,
+                        &["plot", "--json=short", "--no-legend", "--no-pager"],
+                    ),
+                    JsonShape::Array,
                 )
                 .await?,
             ),

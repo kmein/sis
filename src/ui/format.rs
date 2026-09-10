@@ -191,3 +191,39 @@ mod tests {
         assert_eq!(bytes(9_580_544), "9.1M");
     }
 }
+
+/// A µs span the way systemd prints it: `812ms`, `3.429s`, `4min 34.207s`, `1h 2min`.
+pub fn timespan(usec: u64) -> String {
+    if usec < 1_000 {
+        format!("{usec}us")
+    } else if usec < 1_000_000 {
+        format!("{}ms", usec / 1_000)
+    } else if usec < 60_000_000 {
+        format!("{:.3}s", usec as f64 / 1e6)
+    } else if usec < 3_600_000_000 {
+        format!(
+            "{}min {:.3}s",
+            usec / 60_000_000,
+            (usec % 60_000_000) as f64 / 1e6
+        )
+    } else {
+        format!(
+            "{}h {}min",
+            usec / 3_600_000_000,
+            usec % 3_600_000_000 / 60_000_000
+        )
+    }
+}
+
+#[cfg(test)]
+mod timespan_tests {
+    use super::timespan;
+
+    #[test]
+    fn spans() {
+        assert_eq!(timespan(812_000), "812ms");
+        assert_eq!(timespan(3_429_000), "3.429s");
+        assert_eq!(timespan(274_207_000), "4min 34.207s");
+        assert_eq!(timespan(3_720_000_000), "1h 2min");
+    }
+}

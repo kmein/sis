@@ -7,14 +7,15 @@ use ratatui::{layout::Constraint, widgets::Cell};
 use super::{
     Column, Ctx, Resource, Settings, SortKey,
     journal::JournalView,
+    text::TextView,
     unit_detail::{Tab, UnitDetailView},
 };
 use crate::{
-    event::{Effect, Status},
+    event::{Effect, Exec, Status},
     keys::{Action, Binding, Key},
     store::{DataKind, Store},
     systemd::{
-        actions::UnitAction, fetch::FetchKind, journal::JournalSpec, unit::Unit,
+        Scope, actions::UnitAction, fetch::FetchKind, journal::JournalSpec, unit::Unit,
         watch::SystemdSignal,
     },
     ui::{format, theme::Theme},
@@ -22,6 +23,43 @@ use crate::{
 
 /// Map a key action onto a unit action and run it; shared by every view
 /// that acts on a unit.
+/// Show `systemd-analyze VERB UNIT` in a text view.
+pub fn analyze(unit: &str, verb: &str, ctx: &mut Ctx<'_>) {
+    let mut args: Vec<&str> = Vec::new();
+    if ctx.scope == Scope::User {
+        args.push("--user");
+    }
+    args.extend([verb, "--no-pager", unit]);
+    let title = format!("{verb} {unit}");
+    ctx.push(TextView::command(
+        title,
+        Exec::new("systemd-analyze", &args),
+    ));
+}
+
+/// `systemd-analyze unit-shell` / `unit-gdb`: needs root, takes the terminal.
+pub fn interactive(unit: &str, verb: &str, ctx: &mut Ctx<'_>) {
+    let mut args: Vec<&str> = Vec::new();
+    if ctx.scope == Scope::User {
+        args.push("--user");
+    }
+    args.extend([verb, unit]);
+    ctx.interactive(Exec::new("systemd-analyze", &args));
+}
+
+/// The analysis keys shared by the units and detail views; `true` if handled.
+pub fn analysis_action(unit: &str, action: Action, ctx: &mut Ctx<'_>) -> bool {
+    match action {
+        Action::Shell => interactive(unit, "unit-shell", ctx),
+        Action::Debug => interactive(unit, "unit-gdb", ctx),
+        Action::CriticalChain => analyze(unit, "critical-chain", ctx),
+        Action::Verify => analyze(unit, "verify", ctx),
+        Action::Dump => analyze(unit, "dump", ctx),
+        _ => return false,
+    }
+    true
+}
+
 pub fn perform(unit: &str, action: Action, confirm: bool, ctx: &mut Ctx<'_>) {
     let unit_action = match action {
         Action::Start => UnitAction::Start,
@@ -86,6 +124,11 @@ const BINDINGS: &[Binding] = &[
     Binding::new(Key::ch('f'), Action::ResetFailed, "Reset failed"),
     Binding::new(Key::ch('c'), Action::Cat, "Cat unit file"),
     Binding::new(Key::ctrl('k'), Action::Kill, "Kill").confirm(),
+    Binding::new(Key::ch('!'), Action::Shell, "Unit shell"),
+    Binding::new(Key::ctrl('g'), Action::Debug, "Unit gdb").quiet(),
+    Binding::new(Key::ch('C'), Action::CriticalChain, "Critical chain"),
+    Binding::new(Key::ch('V'), Action::Verify, "Verify").quiet(),
+    Binding::new(Key::ch('Y'), Action::Dump, "Dump state").quiet(),
     Binding::new(Key::ch('D'), Action::DaemonReload, "Daemon reload").confirm(),
 ];
 
@@ -254,6 +297,7 @@ impl Resource for UnitsResource {
                 Tab::File,
             )),
             Action::Logs => ctx.push(JournalView::boxed(JournalSpec::unit(ctx.scope, &row.name))),
+            other if analysis_action(&row.name, other, ctx) => {}
             other => perform(&row.name, other, confirm, ctx),
         }
     }

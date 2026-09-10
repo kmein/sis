@@ -27,6 +27,8 @@ for everything), and enriches the rows on screen with PID, memory and age.
 | `s` `x` `r` `R` | start, stop, restart, reload |
 | `e` `d` `m` `M` | enable, disable, mask, unmask |
 | `f` `c` `ctrl-k` `D` | reset-failed, cat unit file, kill (SIGTERM), daemon-reload |
+| `!` `ctrl-g` | `systemd-analyze unit-shell` / `unit-gdb`: leave the TUI, get a shell or a debugger inside the unit, come back (needs root) |
+| `C` `V` `Y` | `systemd-analyze` critical-chain, verify, dump for the unit |
 | `u` | switch between the system and user manager |
 | `1`…`5`, `0` | only services, timers, sockets, targets, mounts, or all |
 | `N` `A` `T` `L` `M` | sort by name, active state, type, load, memory (again: flip) |
@@ -48,17 +50,23 @@ Anything that stops, kills, masks or disables asks first.
 | `sessions` | `loginctl list-sessions` | status, logs, `x` terminate, `L` lock |
 | `users` | `loginctl list-users` | status, logs, `x` terminate, `L` toggle linger |
 | `seats` | `loginctl list-seats` | status |
-| `machines` | `machinectl list` | status, logs, start, `x` poweroff, `ctrl-k` terminate, `r` reboot |
+| `machines` | `machinectl list` | status, logs, start, `x` poweroff, `ctrl-k` terminate, `r` reboot, `!` shell |
 | `links` | `networkctl list` | status, networkd logs, `r` reconfigure, `s` up, `x` down |
 | `boot` | `bootctl list` | entry, `D` set-default, `O` boot once |
 | `security` | `systemd-analyze security` | analysis, `c` describe unit |
 | `blame` | `systemd-analyze blame` | describe, logs |
+| `plot` | `systemd-analyze plot --json` as a table: when each unit started, how long it took | describe, logs, `C` critical chain |
+| `critical-chain`, `unit-files`, `unit-paths`, `exit-status`, `capabilities`, `syscalls`, `filesystems`, `architectures` | the matching `systemd-analyze` verb | text, `ctrl-r` reruns |
 | `bus` | `busctl list` | tree, `i` introspect, `s` status, `U` describe unit |
 | `userdb`, `groups` | `userdbctl` | record |
 | `info` | hostnamectl, timedatectl, localectl, resolvectl, systemd-analyze time, oomctl | `ctrl-r` reruns |
 
 `:user` and `:system` switch managers, `:all` toggles inactive units,
-`:help` and `:quit` do what they say.
+`:help` and `:quit` do what they say. `systemd-analyze` verbs that take an
+argument work from the command bar too: `:calendar *-*-* 04:00`,
+`:timespan 1h 30min`, `:condition ConditionPathExists=/etc`,
+`:cat-config systemd/system.conf`, `:verify foo.service`, `:dump nginx*`,
+`:critical-chain nginx.service`, `:security nginx.service`.
 
 ## Permissions
 

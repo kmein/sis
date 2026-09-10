@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Duration};
 
 use crossterm::event::{Event as TermEvent, EventStream, KeyEvent, KeyEventKind};
 use futures_util::StreamExt;
-use tokio::sync::mpsc::Sender;
+use tokio::{sync::mpsc::Sender, task::JoinHandle};
 use tracing::warn;
 
 use zbus::zvariant::OwnedObjectPath;
@@ -55,6 +55,8 @@ pub enum Event {
         exec: Exec,
         output: Result<String, String>,
     },
+    /// A status line message from the runtime.
+    Flash(Status),
 }
 
 /// Everything the application asks the outside world to do. The UI-only
@@ -73,6 +75,8 @@ pub enum Effect {
         spec: JournalSpec,
     },
     CloseJournal(JournalId),
+    /// Leave the TUI, run this with the terminal, come back.
+    Interactive(Exec),
     /// Run a command; show its output in a text view when `title` is set,
     /// otherwise report success or failure in the status line.
     Exec(Exec),
@@ -165,7 +169,7 @@ impl Status {
 }
 
 /// Forward terminal key presses and resizes to the event channel.
-pub fn spawn_terminal_events(tx: Sender<Event>) {
+pub fn spawn_terminal_events(tx: Sender<Event>) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut stream = EventStream::new();
         while let Some(item) = stream.next().await {
@@ -182,7 +186,7 @@ pub fn spawn_terminal_events(tx: Sender<Event>) {
                 break;
             }
         }
-    });
+    })
 }
 
 /// Send [`Event::Tick`] at a fixed interval.

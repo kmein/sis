@@ -3,6 +3,10 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+use crossterm::{
+    execute,
+    terminal::{EnterAlternateScreen, enable_raw_mode},
+};
 use eyre::Result;
 use ratatui::DefaultTerminal;
 use tokio::{
@@ -13,7 +17,7 @@ use tracing::{debug, error};
 
 use crate::{
     app::App,
-    event::{Effect, Event, spawn_terminal_events, spawn_ticker},
+    event::{Effect, Event, Exec, Status, spawn_terminal_events, spawn_ticker},
     systemd::{
         Backend, Scope,
         actions::{self, Outcome},
@@ -31,6 +35,7 @@ pub struct Runtime {
     app: App,
     watchers: Vec<JoinHandle<()>>,
     journals: HashMap<JournalId, JournalHandle>,
+    term_events: Option<JoinHandle<()>>,
 }
 
 impl Runtime {
@@ -44,6 +49,7 @@ impl Runtime {
             app,
             watchers: Vec::new(),
             journals: HashMap::new(),
+            term_events: None,
         }
     }
 
@@ -65,11 +71,11 @@ impl Runtime {
     }
 
     pub async fn run(mut self, terminal: &mut DefaultTerminal) -> Result<()> {
-        spawn_terminal_events(self.tx.clone());
+        self.term_events = Some(spawn_terminal_events(self.tx.clone()));
         spawn_ticker(self.tx.clone(), std::time::Duration::from_millis(500));
         self.watch().await;
         let effects = self.app.start();
-        self.execute(effects);
+        self.execute(effects, terminal).await;
         terminal.draw(|f| ui::draw(f, &mut self.app))?;
 
         while let Some(event) = self.rx.recv().await {
@@ -78,7 +84,7 @@ impl Runtime {
             while let Ok(event) = self.rx.try_recv() {
                 effects.extend(self.handle(event).await);
             }
-            self.execute(effects);
+            self.execute(effects, terminal).await;
             if self.app.should_quit {
                 break;
             }
@@ -96,7 +102,7 @@ impl Runtime {
         self.app.update(event)
     }
 
-    fn execute(&mut self, effects: Vec<Effect>) {
+    async fn execute(&mut self, effects: Vec<Effect>, terminal: &mut DefaultTerminal) {
         for effect in effects {
             match effect {
                 Effect::Fetch(kind) => {
@@ -167,11 +173,53 @@ impl Runtime {
                     });
                 }
                 Effect::SwitchScope(scope) => self.switch_scope(scope),
+                Effect::Interactive(exec) => self.interactive(exec, terminal).await,
                 Effect::Push(_) | Effect::Pop | Effect::Status(_) | Effect::Confirm { .. } => {
                     error!("UI effect reached the runtime; the app should have consumed it");
                 }
             }
         }
+    }
+
+    /// Hand the terminal to a child process (a shell in a unit's namespace, a
+    /// debugger), then take it back.
+    async fn interactive(&mut self, exec: Exec, terminal: &mut DefaultTerminal) {
+        if let Some(handle) = self.term_events.take() {
+            // Dropping the crossterm stream stops it reading the tty.
+            handle.abort();
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        ratatui::restore();
+        println!("sis: {}", exec.describe);
+        let status = tokio::process::Command::new(&exec.program)
+            .args(&exec.args)
+            .status()
+            .await;
+        let outcome = match status {
+            Ok(s) if s.success() => Ok(()),
+            Ok(s) => Err(format!("exited with {s}")),
+            Err(err) => Err(format!("cannot run {}: {err}", exec.program)),
+        };
+        if let Err(msg) = &outcome {
+            println!("sis: {}: {msg}. Press Enter to return.", exec.describe);
+            let _ = tokio::task::spawn_blocking(|| {
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line)
+            })
+            .await;
+        }
+        let _ = enable_raw_mode();
+        let _ = execute!(std::io::stdout(), EnterAlternateScreen);
+        let _ = terminal.clear();
+        self.term_events = Some(spawn_terminal_events(self.tx.clone()));
+        let status = match outcome {
+            Ok(()) => Status::ok(format!("{}: done", exec.describe)),
+            Err(msg) => Status::error(format!("{}: {msg}", exec.describe)),
+        };
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let _ = tx.send(Event::Flash(status)).await;
+        });
     }
 
     fn switch_scope(&mut self, scope: Scope) {

@@ -35,6 +35,7 @@ const BINDINGS: &[Binding] = &[
     Binding::new(Key::ch('x'), Action::Stop, "Poweroff").confirm(),
     Binding::new(Key::ctrl('k'), Action::Kill, "Terminate").confirm(),
     Binding::new(Key::ch('r'), Action::Restart, "Reboot").confirm(),
+    Binding::new(Key::ch('!'), Action::Shell, "Shell"),
 ];
 
 fn addresses(r: &MachineRow) -> String {
@@ -137,6 +138,7 @@ impl Resource for MachinesResource {
             Action::Start => ctx.exec(Exec::new("machinectl", &["start", m]), false),
             Action::Stop => ctx.exec(Exec::new("machinectl", &["poweroff", m]), true),
             Action::Kill => ctx.exec(Exec::new("machinectl", &["terminate", m]), true),
+            Action::Shell => ctx.interactive(Exec::new("machinectl", &["shell", m])),
             Action::Restart => ctx.exec(Exec::new("machinectl", &["reboot", m]), true),
             _ => {}
         }

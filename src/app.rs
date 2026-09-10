@@ -12,7 +12,7 @@ use tracing::debug;
 use zbus::zvariant::OwnedObjectPath;
 
 use crate::{
-    event::{Effect, Event, Status},
+    event::{Effect, Event, Exec, Status},
     keys::{self, Action},
     resources::{self, Ctx, Handled, Settings, View, text::TextView},
     store::Store,
@@ -21,6 +21,32 @@ use crate::{
 };
 
 const FLASH_FOR: Duration = Duration::from_secs(6);
+/// `systemd-analyze` verbs that take an argument from the command bar.
+const ANALYZE_VERBS: &[&str] = &[
+    "calendar",
+    "timespan",
+    "timestamp",
+    "condition",
+    "cat-config",
+    "verify",
+    "dump",
+    "critical-chain",
+    "compare-versions",
+    "capability",
+    "syscall-filter",
+    "filesystems",
+    "exit-status",
+    "image-policy",
+    "transient-settings",
+    "security",
+];
+const SINGLE_ARG_VERBS: &[&str] = &[
+    "calendar",
+    "timespan",
+    "timestamp",
+    "condition",
+    "image-policy",
+];
 const MANAGER_EVERY: Duration = Duration::from_secs(2);
 /// Give up waiting for a job's result after this long.
 const JOB_TIMEOUT: Duration = Duration::from_secs(120);
@@ -199,6 +225,10 @@ impl App {
             }
             Event::BackendReady(backend) => self.on_backend(backend),
             Event::Signal(signal) => self.on_signal(signal),
+            Event::Flash(status) => {
+                self.flash(status);
+                Vec::new()
+            }
             Event::Exec { exec, output } => match (exec.title, output) {
                 (_, output) if exec.deliver.is_some() => {
                     let id = exec.deliver.expect("checked");
@@ -486,6 +516,26 @@ impl App {
                         self.views.last_mut().expect("a view").set_filter(arg);
                     }
                     effects
+                }
+                None if ANALYZE_VERBS.contains(&name) && !arg.is_empty() => {
+                    // `:calendar *-*-* 04:00`, `:cat-config systemd/system.conf`, ...
+                    let mut args: Vec<&str> = Vec::new();
+                    if self.scope == Scope::User {
+                        args.push("--user");
+                    }
+                    args.push(name);
+                    args.push("--no-pager");
+                    // Specs with spaces (`*-*-* 04:00`, `1h 30min`) are one argument.
+                    if SINGLE_ARG_VERBS.contains(&name) {
+                        args.push(arg);
+                    } else {
+                        args.extend(arg.split_whitespace());
+                    }
+                    let exec = Exec::new("systemd-analyze", &args);
+                    self.apply(vec![Effect::Push(TextView::command(
+                        format!("{name} {arg}"),
+                        exec,
+                    ))])
                 }
                 None => {
                     self.flash(Status::error(format!("unknown command: {name}")));

@@ -58,6 +58,13 @@ pub enum Action {
     Cat,
     Kill,
     DaemonReload,
+    /// `systemd-analyze unit-shell`
+    Shell,
+    /// `systemd-analyze unit-gdb`
+    Debug,
+    CriticalChain,
+    Verify,
+    Dump,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

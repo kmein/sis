@@ -34,6 +34,21 @@ pub enum ViewData {
     Bus(Vec<BusRow>),
     Userdb(Vec<UserdbRow>),
     Groups(Vec<GroupRow>),
+    Plot(Vec<PlotRow>),
+}
+
+/// One unit of `systemd-analyze plot --json=short`; times in µs since boot.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlotRow {
+    pub name: String,
+    #[serde(default)]
+    pub activating: Option<u64>,
+    #[serde(default)]
+    pub activated: Option<u64>,
+    #[serde(default)]
+    pub time: Option<u64>,
+    #[serde(default)]
+    pub deactivated: Option<u64>,
 }
 
 /// `loginctl list-users --json=short`.
@@ -304,6 +319,7 @@ pub enum DataKind {
     Bus,
     Userdb,
     Groups,
+    Plot,
 }
 
 impl ViewData {
@@ -329,6 +345,7 @@ impl ViewData {
             Self::Bus(_) => DataKind::Bus,
             Self::Userdb(_) => DataKind::Userdb,
             Self::Groups(_) => DataKind::Groups,
+            Self::Plot(_) => DataKind::Plot,
         }
     }
 }
@@ -367,6 +384,7 @@ pub struct Store {
     pub bus: Vec<BusRow>,
     pub userdb: Vec<UserdbRow>,
     pub groups: Vec<GroupRow>,
+    pub plot: Vec<PlotRow>,
 }
 
 impl Store {
@@ -405,6 +423,7 @@ impl Store {
             ViewData::Bus(rows) => self.bus = rows,
             ViewData::Userdb(rows) => self.userdb = rows,
             ViewData::Groups(rows) => self.groups = rows,
+            ViewData::Plot(rows) => self.plot = rows,
         }
     }
 

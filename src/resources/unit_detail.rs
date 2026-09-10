@@ -75,6 +75,11 @@ const BINDINGS: &[Binding] = &[
     Binding::new(Key::ch('M'), Action::Unmask, "Unmask"),
     Binding::new(Key::ch('f'), Action::ResetFailed, "Reset failed"),
     Binding::new(Key::ctrl('k'), Action::Kill, "Kill").confirm(),
+    Binding::new(Key::ch('!'), Action::Shell, "Unit shell"),
+    Binding::new(Key::ctrl('g'), Action::Debug, "Unit gdb").quiet(),
+    Binding::new(Key::ch('C'), Action::CriticalChain, "Critical chain"),
+    Binding::new(Key::ch('V'), Action::Verify, "Verify").quiet(),
+    Binding::new(Key::ch('Y'), Action::Dump, "Dump state").quiet(),
 ];
 
 pub struct UnitDetailView {
@@ -201,6 +206,7 @@ impl View for UnitDetailView {
                 self.pane().on_global(Action::ToggleWrap);
             }
             Action::Logs => ctx.push(JournalView::boxed(JournalSpec::unit(ctx.scope, &self.name))),
+            other if units::analysis_action(&self.name, other, ctx) => {}
             action => units::perform(&self.name, action, binding.confirm, ctx),
         }
         Handled::Yes

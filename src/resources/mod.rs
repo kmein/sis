@@ -9,6 +9,7 @@ pub mod jobs;
 pub mod journal;
 pub mod links;
 pub mod machines;
+pub mod plot;
 pub mod seats;
 pub mod security;
 pub mod sessions;
@@ -110,6 +111,11 @@ impl<'a> Ctx<'a> {
         } else {
             self.effect(effect);
         }
+    }
+
+    /// Hand the terminal to a command and come back afterwards.
+    pub fn interactive(&mut self, exec: Exec) {
+        self.effect(Effect::Interactive(exec));
     }
 
     pub fn finish(self) -> Vec<Effect> {
@@ -558,6 +564,23 @@ struct Entry {
     open: fn(Scope) -> Box<dyn View>,
 }
 
+/// A `systemd-analyze` verb shown as text, with `--user` in user scope.
+macro_rules! analyze {
+    ($name:literal, [$($arg:literal),*], $aliases:expr) => {
+        Entry { name: $name, aliases: $aliases, open: |scope| analyze_view($name, &[$($arg),*], scope) }
+    };
+}
+
+fn analyze_view(name: &str, args: &[&str], scope: Scope) -> Box<dyn View> {
+    let mut full: Vec<&str> = Vec::new();
+    if scope == Scope::User {
+        full.push("--user");
+    }
+    full.extend_from_slice(args);
+    full.push("--no-pager");
+    text::TextView::command(name, Exec::new("systemd-analyze", &full))
+}
+
 macro_rules! entry {
     ($res:ty) => {
         Entry {
@@ -585,6 +608,15 @@ const REGISTRY: &[Entry] = &[
     entry!(bus::BusResource),
     entry!(userdb::UserdbResource),
     entry!(userdb::GroupsResource),
+    entry!(plot::PlotResource),
+    analyze!("critical-chain", ["critical-chain"], &["chain"]),
+    analyze!("unit-files", ["unit-files"], &[]),
+    analyze!("unit-paths", ["unit-paths"], &[]),
+    analyze!("exit-status", ["exit-status"], &["exit-codes"]),
+    analyze!("capabilities", ["capability"], &["caps"]),
+    analyze!("syscalls", ["syscall-filter"], &["syscall-filter"]),
+    analyze!("filesystems", ["filesystems"], &["fs"]),
+    analyze!("architectures", ["architectures"], &[]),
     Entry {
         name: "info",
         aliases: &["system-info", "hostnamectl"],
@@ -608,7 +640,7 @@ fn journal_view(scope: Scope) -> Box<dyn View> {
 
 /// `:info` — the one-shot status tools, concatenated.
 fn info_view(_scope: Scope) -> Box<dyn View> {
-    const SCRIPT: &str = r#"for c in hostnamectl timedatectl "localectl status" "resolvectl status" "systemd-analyze time" "oomctl dump"; do echo "== $c"; $c 2>&1; echo; done"#;
+    const SCRIPT: &str = r#"for c in hostnamectl timedatectl "localectl status" "resolvectl status" "systemd-analyze time" "systemd-analyze log-level" "systemd-analyze log-target" "systemd-analyze service-watchdogs" "oomctl dump"; do echo "== $c"; $c 2>&1; echo; done"#;
     text::TextView::command("info", Exec::shell(SCRIPT, "system info"))
 }
 
