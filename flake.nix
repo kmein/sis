@@ -15,12 +15,7 @@
         sourceByRegex
         ;
 
-      eachSystem =
-        f:
-        genAttrs [
-          "aarch64-linux"
-          "x86_64-linux"
-        ] (system: f nixpkgs.legacyPackages.${system});
+      eachSystem = f: builtins.mapAttrs (_system: f) nixpkgs.legacyPackages;
     in
     {
       formatter = eachSystem (pkgs: pkgs.nixfmt);
